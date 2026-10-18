@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 
 set -Eeuo pipefail
 
@@ -82,24 +82,23 @@ check_system() {
 
 show_header() {
     clear 2>/dev/null || true
-    printf '%s%s\n' "$C_GREEN$C_BOLD" ' ██████╗  ██╗  ██╗  ██████╗  ██╗'
-    printf '%s%s\n' "$C_WHITE" '██╔═══██╗ ╚██╗██╔╝ ██╔════╝  ██║'
-    printf '%s\n' '██║   ██║  ╚███╔╝  ██║  ███╗ ██║'
-    printf '%s\n' '██║   ██║  ██╔██╗  ██║   ██║ ██║'
-    printf '%s%s\n' "$C_RED" '╚██████╔╝ ██╔╝ ██╗ ╚██████╔╝ ██║'
-    printf '%s\n' ' ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚═╝'
-    printf '%s                 V2 - VPN%s\n' "$C_YELLOW$C_BOLD" "$C_RESET"
-    printf '%s                    ✣%s\n' "$C_WHITE" "$C_RESET"
+    printf '%s%s\n' "$C_GREEN$C_BOLD" ' █████╗ ██╗  ██╗  ██████╗ ██╗  ██╗   ██╗ ██████╗ ██╗   ██╗'
+    printf '%s%s\n' "$C_WHITE" '██╔══██╗╚██╗██╔╝ ██╔════╝ ██║  ██║   ██║██╔══██╗██║  ██║'
+    printf '%s%s\n' "$C_WHITE" '██║  ██║ ╚███╔╝  ██║  ███╗██║  ██║   ██║██████╔╝██║  ██║'
+    printf '%s%s\n' "$C_WHITE" '██║  ██║ ██╔██╗  ██║   ██║██║  ╚██╗ ██╔╝██╔═══╝ ██║  ██║'
+    printf '%s%s\n' "$C_RED"   '╚█████╔╝██╔╝ ██╗ ╚██████╔╝╚██████╔╝ ╚████╔╝ ██║    ╚█████╔╝'
+    printf '%s%s\n' "$C_RED"   ' ╚════╝ ╚═╝  ╚═╝  ╚═════╝  ╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚════╝'
+    printf '%s   V2 - VPN%s\n' "$C_YELLOW$C_BOLD" "$C_RESET"
+    printf '%s     ✣%s\n' "$C_WHITE" "$C_RESET"
     printf '%s%s\n' "$C_BLUE$C_BOLD" '██╗   ██╗ ██████╗ ███╗   ██╗   ███████╗ ██████╗ ██████╗ ██╗ ██████╗ ████████╗'
-    printf '%s\n' '██║   ██║ ██╔══██╗ ████╗  ██║   ██╔════╝ ██╔════╝ ██╔══██╗ ██║ ██╔══██╗ ╚══██╔══╝'
-    printf '%s\n' '╚██╗ ██╔╝ ██████╔╝ ██╔██╗ ██║   ███████╗ ██║     ██████╔╝ ██║ ██████╔╝   ██║'
-    printf '%s\n' ' ╚████╔╝  ██╔═══╝  ██║╚██╗██║   ╚════██║ ██║     ██╔══██╗ ██║ ██╔═══╝    ██║'
-    printf '%s\n' '  ╚██╔╝   ██║      ██║ ╚████║   ███████║ ╚██████╗ ██║  ██║ ██║ ██║        ██║'
-    printf '%s\n' '   ╚═╝    ╚═╝      ╚═╝  ╚═══╝   ╚══════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═╝ ╚═╝        ╚═╝'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██╔═══██╗████╗  ██║   ██╔════╝██╔════╝██╔══██╗██║██╔═══██╗╚══██╔══╝'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██║   ██║██╔██╗ ██║   ███████╗██║     ██████╔╝██║██║   ██║   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '╚██╗ ██╔╝██║   ██║██║╚██╗██║   ╚════██║██║     ██╔══██╗██║██║   ██║   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" ' ╚████╔╝ ╚██████╔╝██║ ╚████║   ███████║╚██████╗██║  ██║██║╚██████╔╝   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '  ╚═══╝   ╚═════╝ ╚═╝  ╚═══╝   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝ ╚═════╝    ╚═╝'
     printf '%s\n' "$C_RESET"
     printf '%sDESARROLLADO POR OXG%s    Versión %s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$SCRIPT_VERSION"
 }
-
 show_main_menu() {
     show_header
     printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW" "$C_RESET"
