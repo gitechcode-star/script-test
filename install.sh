@@ -151,6 +151,93 @@ prompt_domain() {
     done
 }
 
+verify_domain_dns() {
+    local domain="$1" public_ipv4 resolved_ipv4 public_ipv6 resolved_ipv6
+
+    if ! public_ipv4="$(curl -4fsS --max-time 10 https://api.ipify.org)"; then
+        fail "no pude determinar la IP pública IPv4 de esta VPS. Comprueba su conexión a Internet." || true
+        return 1
+    fi
+    resolved_ipv4="$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u)"
+    if [[ -z "$resolved_ipv4" ]] || ! grep -Fxq -- "$public_ipv4" <<< "$resolved_ipv4"; then
+        printf '%sEl dominio todavía no resuelve a la IP pública de esta VPS.%s\n' "$C_RED" "$C_RESET" >&2
+        printf 'IP pública de la VPS: %s\n' "$public_ipv4" >&2
+        printf 'Registros A encontrados: %s\n' "${resolved_ipv4:-ninguno}" >&2
+        printf 'Configura el registro A y vuelve a intentar la instalación.\n' >&2
+        return 1
+    fi
+
+    resolved_ipv6="$(getent ahostsv6 "$domain" | awk '{print tolower($1)}' | sort -u)"
+    if [[ -n "$resolved_ipv6" ]]; then
+        public_ipv6="$(curl -6fsS --max-time 10 https://api64.ipify.org 2>/dev/null || true)"
+        if [[ -z "$public_ipv6" ]] || ! python3 - "$public_ipv6" "$resolved_ipv6" <<'PY'
+import ipaddress
+import sys
+
+try:
+    expected = ipaddress.ip_address(sys.argv[1])
+    resolved = {ipaddress.ip_address(value) for value in sys.argv[2].splitlines()}
+except ValueError:
+    raise SystemExit(1)
+
+raise SystemExit(0 if expected in resolved else 1)
+PY
+        then
+            printf '%sEl registro AAAA no coincide con la IPv6 pública de esta VPS.%s\n' "$C_RED" "$C_RESET" >&2
+            printf 'IPv6 pública de la VPS: %s\n' "${public_ipv6:-no disponible}" >&2
+            printf 'Registros AAAA encontrados: %s\n' "$resolved_ipv6" >&2
+            printf 'Corrige o elimina el registro AAAA antes de continuar.\n' >&2
+            return 1
+        fi
+    fi
+
+    printf 'Dominio verificado: %s apunta a %s.\n' "$domain" "$public_ipv4"
+}
+
+obtain_ssl_certificate() {
+    local domain="$1" email="" certbot_bin
+    local -a certbot_args
+
+    if ss -ltnH 'sport = :80' 2>/dev/null | grep -q .; then
+        fail "el puerto 80 está ocupado. Libéralo para validar el dominio y obtener el certificado SSL." || true
+        return 1
+    fi
+
+    certbot_bin="$(command -v certbot || true)"
+    if [[ -z "$certbot_bin" ]]; then
+        printf 'Instalando Certbot para emitir el certificado SSL...\n'
+        if ! command -v snap >/dev/null 2>&1; then
+            if ! apt-get update || ! apt-get install -y snapd; then
+                fail "no pude instalar snapd, necesario para instalar Certbot." || true
+                return 1
+            fi
+        fi
+        systemctl enable --now snapd.socket >/dev/null 2>&1 || true
+        if ! snap install --classic certbot; then
+            fail "no pude instalar Certbot." || true
+            return 1
+        fi
+        certbot_bin="/snap/bin/certbot"
+        if [[ ! -e /usr/local/bin/certbot ]]; then
+            ln -s "$certbot_bin" /usr/local/bin/certbot
+        fi
+    fi
+
+    read -r -p 'Correo para avisos de renovación (opcional, Enter para omitir): ' email </dev/tty || email=""
+    certbot_args=(certonly --standalone --non-interactive --agree-tos --preferred-challenges http -d "$domain")
+    if [[ -n "$email" ]]; then
+        certbot_args+=(--email "$email")
+    else
+        certbot_args+=(--register-unsafely-without-email)
+    fi
+
+    printf 'Solicitando el certificado SSL para %s...\n' "$domain"
+    if ! "$certbot_bin" "${certbot_args[@]}"; then
+        fail "Certbot no pudo emitir el certificado. Verifica que TCP 80 esté permitido en el firewall de la VPS y del proveedor." || true
+        return 1
+    fi
+}
+
 check_managed_dir() {
     local path="$1"
     if [[ -e "$path" || -L "$path" ]]; then
@@ -166,6 +253,10 @@ install_current_version() {
 
     if ! domain="$(prompt_domain)"; then
         printf '\nInstalación cancelada.\n'
+        pause
+        return
+    fi
+    if ! verify_domain_dns "$domain"; then
         pause
         return
     fi
@@ -239,6 +330,12 @@ install_current_version() {
         return
     fi
 
+    if ! obtain_ssl_certificate "$domain"; then
+        [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
+        pause
+        return
+    fi
+
     if [[ ! -e "$APP_ROOT" ]]; then
         install -d -o root -g root -m 0755 "$APP_ROOT"
         printf '%s\n' "$MARKER_VALUE" > "$APP_ROOT/$OWNERSHIP_MARKER"
@@ -281,9 +378,12 @@ install_current_version() {
     printf '\n%sInstalación completada.%s\n' "$C_GREEN" "$C_RESET"
     printf 'Versión instalada: %s\n' "$SCRIPT_VERSION"
     printf 'Dominio guardado en %s/domain.\n' "$CONFIG_DIR"
+    printf 'Certificado SSL: /etc/letsencrypt/live/%s/fullchain.pem\n' "$domain"
+    printf 'Clave privada SSL: /etc/letsencrypt/live/%s/privkey.pem\n' "$domain"
     printf 'Abre el menú con: sudo vpn-ssh-admin\n'
     printf 'Abre el instalador con: sudo oxgi-vpn-installer\n'
-    pause
+    printf 'Abriendo el menú principal...\n'
+    exec bash "$LAUNCHER"
 }
 
 update_installer_menu() {
