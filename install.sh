@@ -87,8 +87,15 @@ show_header() {
     printf '%s%s%s%s%s%s%s\n' "$C_WHITE" '| | | |  \  /   | |  _    ' "$C_YELLOW$C_BOLD" '---' "$C_WHITE$C_BOLD" '    \ V /   | |_) | |  \| |' "$C_RESET"
     printf '%s%s\n' "$C_WHITE" '| |_| |  /  \   | |_| |            \   /    |  __/  | |\  |'
     printf '%s%s\n' "$C_RED$C_BOLD" ' \___/  /_/\_\   \____|             \_/     |_|     |_| \_|'
-    printf '%s%35s%s\n' "$C_YELLOW$C_BOLD" 'V2' "$C_RESET"
-    printf '%s\n\n' "$C_RESET"
+    printf '%s%31s%s\n' "$C_YELLOW$C_BOLD" 'V2' "$C_RESET"
+    printf '%s     ✣%s\n' "$C_WHITE" "$C_RESET"
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '██╗   ██╗ ██████╗ ███╗   ██╗   ███████╗ ██████╗ ██████╗ ██╗ ██████╗ ████████╗'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██╔═══██╗████╗  ██║   ██╔════╝██╔════╝██╔══██╗██║██╔═══██╗╚══██╔══╝'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██║   ██║██╔██╗ ██║   ███████╗██║     ██████╔╝██║██║   ██║   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '╚██╗ ██╔╝██║   ██║██║╚██╗██║   ╚════██║██║     ██╔══██╗██║██║   ██║   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" ' ╚████╔╝ ╚██████╔╝██║ ╚████║   ███████║╚██████╗██║  ██║██║╚██████╔╝   ██║'
+    printf '%s%s\n' "$C_BLUE$C_BOLD" '  ╚═══╝   ╚═════╝ ╚═╝  ╚═══╝   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝ ╚═════╝    ╚═╝'
+    printf '%s\n' "$C_RESET"
     printf '%sDESARROLLADO POR OXG%s    Versión %s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$SCRIPT_VERSION"
 }
 show_main_menu() {
