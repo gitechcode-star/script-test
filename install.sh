@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.4"
+readonly SCRIPT_VERSION="0.2.5"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
@@ -292,18 +292,18 @@ update_installer_menu() {
         return
     fi
 
-    # Actualiza la copia desde la que se abrió el menú, incluso antes de instalar el VPN.
-    if check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
-        target="$APP_ROOT/install.sh"
-        menu_target="$APP_ROOT/menu.sh"
-    elif [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
+    # Prioriza el archivo desde el que se ejecutó el instalador.
+    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
         target="$SCRIPT_DIR/install.sh"
         menu_target="$SCRIPT_DIR/menu.sh"
     elif [[ -f "$PWD/install.sh" && ! -L "$PWD/install.sh" ]]; then
         target="$PWD/install.sh"
         menu_target="$PWD/menu.sh"
+    elif check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
+        target="$APP_ROOT/install.sh"
+        menu_target="$APP_ROOT/menu.sh"
     elif [[ ! -e "$INSTALLER_LAUNCHER" && ! -L "$INSTALLER_LAUNCHER" ]]; then
-        # Si se ejecutó con curl | bash, instala el paquete completo en una ruta persistente.
+        # Si se ejecutó con curl | bash, deja el paquete completo en una ruta persistente.
         target="$INSTALLER_LAUNCHER"
         menu_target="$(dirname -- "$INSTALLER_LAUNCHER")/menu.sh"
     else
@@ -312,7 +312,6 @@ update_installer_menu() {
         pause
         return
     fi
-
     printf '\nVersión actual del instalador: %s\n' "$SCRIPT_VERSION"
     printf 'Versión publicada del paquete: %s\n' "$new_version"
     printf 'Se actualizarán el menú completo y sus archivos en:\n  %s\n  %s\n' "$target" "$menu_target"
@@ -368,8 +367,8 @@ update_installer_menu() {
 
     printf '\n%sMenú completo y archivos del paquete actualizados a %s.%s\n' "$C_GREEN" "$new_version" "$C_RESET"
     printf 'Respaldos: %s.bak y %s.bak\n' "$target" "$menu_target"
-    printf 'Los cambios se verán al volver a abrir el instalador.\n'
-    pause
+    printf 'Reiniciando el instalador con el menú actualizado...\n'
+    exec bash "$target"
 }
 show_version_menu() {
     local installed_version="No instalado"
