@@ -18,6 +18,10 @@ readonly MENU_FUNCTION_END="# OXGI_MENU_FUNCTION_END"
 readonly AUTO_MENU_BEGIN="# OXGI_AUTO_MENU_BEGIN"
 readonly AUTO_MENU_END="# OXGI_AUTO_MENU_END"
 readonly STATE_DIR="/var/lib/vpn-ssh-admin"
+readonly SSH_USERS_DIR="$STATE_DIR/ssh-users"
+readonly SSH_LIMITS_FILE="/etc/security/limits.d/90-oxgi-ssh-users.conf"
+readonly SSH_AUTOKILL_SERVICE="/etc/systemd/system/oxgi-ssh-autokill.service"
+readonly SSH_AUTOKILL_TIMER="/etc/systemd/system/oxgi-ssh-autokill.timer"
 readonly LOG_DIR="/var/log/vpn-ssh-admin"
 readonly SERVICE_UNIT="/etc/systemd/system/vpn-ssh-admin.service"
 readonly OWNERSHIP_MARKER=".managed-by-vpn-ssh-admin"
@@ -461,7 +465,7 @@ uninstall_system() {
     fi
 
     local -a targets=()
-    local path certificate_domain="" certbot_link_owned=0
+    local path certificate_domain="" certbot_link_owned=0 username
 
     if [[ -f "$CONFIG_DIR/domain" && ! -L "$CONFIG_DIR/domain" ]]; then
         IFS= read -r certificate_domain < "$CONFIG_DIR/domain" || true
@@ -502,6 +506,21 @@ uninstall_system() {
     fi
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" ]] && grep -Fxq '# Managed by VPN-SSH-Admin' "$SERVICE_UNIT"; then
         targets+=("$SERVICE_UNIT")
+    fi
+    if [[ -f "$SSH_USERS_DIR/$OWNERSHIP_MARKER" && ! -L "$SSH_USERS_DIR/$OWNERSHIP_MARKER" ]] && grep -Fxq "$MARKER_VALUE" "$SSH_USERS_DIR/$OWNERSHIP_MARKER"; then
+        while IFS= read -r username; do
+            targets+=("Cuenta SSH: $username")
+        done < <(ssh_user_names)
+        targets+=("$SSH_USERS_DIR")
+    fi
+    if [[ -f "$SSH_LIMITS_FILE" && ! -L "$SSH_LIMITS_FILE" ]] && grep -Fxq '# OXGI_MANAGED_SSH_USER_LIMITS' "$SSH_LIMITS_FILE"; then
+        targets+=("$SSH_LIMITS_FILE")
+    fi
+    if [[ -f "$SSH_AUTOKILL_SERVICE" && ! -L "$SSH_AUTOKILL_SERVICE" ]] && grep -Fxq '# OXGI_MANAGED_SSH_AUTOKILL' "$SSH_AUTOKILL_SERVICE"; then
+        targets+=("$SSH_AUTOKILL_SERVICE")
+    fi
+    if [[ -f "$SSH_AUTOKILL_TIMER" && ! -L "$SSH_AUTOKILL_TIMER" ]] && grep -Fxq '# OXGI_MANAGED_SSH_AUTOKILL' "$SSH_AUTOKILL_TIMER"; then
+        targets+=("$SSH_AUTOKILL_TIMER")
     fi
     if [[ -n "$certificate_domain" ]]; then
         for path in "/etc/letsencrypt/live/$certificate_domain" "/etc/letsencrypt/archive/$certificate_domain" "/etc/letsencrypt/renewal/$certificate_domain.conf"; do
@@ -554,6 +573,21 @@ uninstall_system() {
         rm -rf -- "/etc/letsencrypt/live/$certificate_domain" "/etc/letsencrypt/archive/$certificate_domain"
         rm -f -- "/etc/letsencrypt/renewal/$certificate_domain.conf"
     fi
+    if [[ -f "$SSH_AUTOKILL_TIMER" && ! -L "$SSH_AUTOKILL_TIMER" ]] && grep -Fxq '# OXGI_MANAGED_SSH_AUTOKILL' "$SSH_AUTOKILL_TIMER" && command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now oxgi-ssh-autokill.timer >/dev/null 2>&1 || true
+    fi
+    for path in "${targets[@]}"; do
+        case "$path" in
+            Cuenta\ SSH:\ *)
+                username="${path#Cuenta SSH: }"
+                if ! delete_ssh_user_account "$username"; then
+                    printf '%sNo pude eliminar la cuenta SSH %s; cancelé la desinstalación para conservar los archivos de administración.%s\n' "$C_RED" "$username" "$C_RESET"
+                    pause
+                    return
+                fi
+                ;;
+        esac
+    done
     if ! remove_auto_menu_hook; then
         printf '%sNo continué para no dejar una configuración automática rota.%s\n' "$C_RED" "$C_RESET"
         pause
@@ -577,6 +611,11 @@ uninstall_system() {
     for path in "${targets[@]}"; do
         case "$path" in
             "$APP_ROOT"|"$CONFIG_DIR"|"$STATE_DIR"|"$LOG_DIR") rm -rf -- "$path" ;;
+            "$SSH_USERS_DIR")
+                rm -rf -- "$path"
+                ;;
+            Cuenta\ SSH:\ *) ;;
+            "$SSH_LIMITS_FILE"|"$SSH_AUTOKILL_SERVICE"|"$SSH_AUTOKILL_TIMER") rm -f -- "$path" ;;
             "$LAUNCHER") rm -f -- "$path" ;;
             "$MENU_COMMAND") rm -f -- "$path" ;;
             "$INSTALLER_LAUNCHER") rm -f -- "$path" ;;
@@ -591,9 +630,537 @@ uninstall_system() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
+    rmdir -- "$STATE_DIR" 2>/dev/null || true
 
     printf '\n%sSe eliminaron los archivos del sistema y el certificado SSL asociado.%s\n' "$C_GREEN" "$C_RESET"
     pause
+}
+
+ensure_ssh_users_dir() {
+    if [[ -L "$STATE_DIR" || ( -e "$STATE_DIR" && ! -d "$STATE_DIR" ) ]]; then
+        printf '%sLa ruta de datos de usuarios no es un directorio seguro.%s\n' "$C_RED" "$C_RESET" >&2
+        return 1
+    fi
+    install -d -o root -g root -m 0750 "$STATE_DIR" || return 1
+    if [[ -L "$SSH_USERS_DIR" || ( -e "$SSH_USERS_DIR" && ! -d "$SSH_USERS_DIR" ) ]]; then
+        printf '%sLa ruta de usuarios SSH no es un directorio seguro.%s\n' "$C_RED" "$C_RESET" >&2
+        return 1
+    fi
+    install -d -o root -g root -m 0700 "$SSH_USERS_DIR" || return 1
+    if [[ -e "$SSH_USERS_DIR/$OWNERSHIP_MARKER" ]]; then
+        grep -Fxq "$MARKER_VALUE" "$SSH_USERS_DIR/$OWNERSHIP_MARKER" || {
+            printf '%sLa carpeta de usuarios SSH no pertenece a este sistema.%s\n' "$C_RED" "$C_RESET" >&2
+            return 1
+        }
+    elif find "$SSH_USERS_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        printf '%sLa carpeta de usuarios SSH ya contiene datos no administrados por este sistema.%s\n' "$C_RED" "$C_RESET" >&2
+        return 1
+    else
+        printf '%s\n' "$MARKER_VALUE" > "$SSH_USERS_DIR/$OWNERSHIP_MARKER" || return 1
+        chmod 0600 "$SSH_USERS_DIR/$OWNERSHIP_MARKER"
+    fi
+}
+
+ssh_user_names() {
+    local file name
+    for file in "$SSH_USERS_DIR"/*.meta; do
+        [[ -f "$file" && ! -L "$file" ]] || continue
+        name="${file##*/}"
+        name="${name%.meta}"
+        [[ "$name" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || continue
+        printf '%s\n' "$name"
+    done | sort
+}
+
+read_ssh_user_data() {
+    local username="$1" file
+    file="$SSH_USERS_DIR/$username.meta"
+    SSH_USER_EXPIRY=""
+    SSH_USER_LIMIT=""
+    [[ -f "$file" && ! -L "$file" ]] || return 1
+    IFS= read -r SSH_USER_EXPIRY < "$file" || return 1
+    SSH_USER_LIMIT="$(sed -n '2p' "$file")"
+    [[ "$SSH_USER_EXPIRY" =~ ^[0-9]+$ && "$SSH_USER_LIMIT" =~ ^[1-9][0-9]*$ ]]
+}
+
+write_ssh_limits() {
+    local file username expiry limit temp_file
+    if [[ -L "$SSH_LIMITS_FILE" ]]; then
+        printf '%s%s es un enlace simbólico; no cambiaré límites PAM externos.%s\n' "$C_RED" "$SSH_LIMITS_FILE" "$C_RESET" >&2
+        return 1
+    fi
+    if [[ -e "$SSH_LIMITS_FILE" ]] && ! grep -Fxq '# OXGI_MANAGED_SSH_USER_LIMITS' "$SSH_LIMITS_FILE"; then
+        printf '%s%s existe y no pertenece al script; no cambiaré los límites PAM.%s\n' "$C_RED" "$SSH_LIMITS_FILE" "$C_RESET" >&2
+        return 1
+    fi
+    if ! grep -Eq '^[[:space:]]*session[[:space:]].*pam_limits\.so' /etc/pam.d/sshd /etc/pam.d/common-session 2>/dev/null ||
+        ! /usr/sbin/sshd -T 2>/dev/null | grep -Fxq 'usepam yes'; then
+        printf '%sSSH/PAM no tiene pam_limits.so activo con UsePAM; no puedo aplicar de forma fiable el límite de sesiones por usuario.%s\n' "$C_RED" "$C_RESET" >&2
+        return 1
+    fi
+    temp_file="$(mktemp /etc/security/limits.d/.90-oxgi-ssh-users.XXXXXX)" || return 1
+    {
+        printf '# OXGI_MANAGED_SSH_USER_LIMITS\n'
+        for file in "$SSH_USERS_DIR"/*.meta; do
+            [[ -f "$file" && ! -L "$file" ]] || continue
+            username="${file##*/}"
+            username="${username%.meta}"
+            [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || continue
+            IFS= read -r expiry < "$file" || continue
+            limit="$(sed -n '2p' "$file")"
+            [[ "$limit" =~ ^[1-9][0-9]*$ ]] || continue
+            printf '%s hard maxlogins %s\n' "$username" "$limit"
+        done
+    } > "$temp_file" || { rm -f -- "$temp_file"; return 1; }
+    chmod 0644 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$SSH_LIMITS_FILE"
+}
+
+parse_ssh_duration() {
+    local duration="$1" base_epoch="$2" amount unit result
+    if [[ ! "$duration" =~ ^([1-9][0-9]*)([dhm])$ ]]; then
+        return 1
+    fi
+    amount="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2]}"
+    case "$unit" in
+        h) result=$((base_epoch + amount * 3600)) ;;
+        d) result="$(date -d "@$base_epoch +$amount days" +%s 2>/dev/null)" || return 1 ;;
+        m) result="$(date -d "@$base_epoch +$amount months" +%s 2>/dev/null)" || return 1 ;;
+    esac
+    [[ "$result" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$result"
+}
+
+save_ssh_user_data() {
+    local username="$1" expiry="$2" limit="$3" temp_file expiry_lock_date
+    temp_file="$(mktemp "$SSH_USERS_DIR/.user.XXXXXX")" || return 1
+    printf '%s\n%s\n' "$expiry" "$limit" > "$temp_file" || { rm -f -- "$temp_file"; return 1; }
+    chmod 0600 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$SSH_USERS_DIR/$username.meta" || return 1
+    # chage accepts dates only; lock at the start of the day after expiry so an
+    # account is never disabled before its exact metadata expiration time.
+    expiry_lock_date="$(date -d "@$expiry +1 day" +%F)" || return 1
+    chage -E "$expiry_lock_date" "$username"
+}
+
+ssh_user_expiry_text() {
+    local expiry="$1" now remaining days hours minutes
+    now="$(date +%s)"
+    if (( expiry <= now )); then
+        printf 'VENCIDO'
+        return
+    fi
+    remaining=$((expiry - now))
+    days=$((remaining / 86400))
+    hours=$(((remaining % 86400) / 3600))
+    minutes=$(((remaining % 3600) / 60))
+    printf '%s (restan %sd %sh %sm)' "$(date -d "@$expiry" '+%Y-%m-%d %H:%M:%S %Z')" "$days" "$hours" "$minutes"
+}
+
+ssh_user_remote_ips() {
+    local username="$1" user_uid state recv_q send_q local_endpoint remote_endpoint process pid process_uid remote_ip
+    user_uid="$(id -u "$username" 2>/dev/null)" || return
+    {
+    while read -r state recv_q send_q local_endpoint remote_endpoint process; do
+        [[ "$state" == ESTAB && "$process" == *sshd* ]] || continue
+        [[ "$process" =~ pid=([0-9]+) ]] || continue
+        pid="${BASH_REMATCH[1]}"
+        process_uid="$(ps -o uid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+        [[ "$process_uid" == "$user_uid" ]] || continue
+        remote_ip="${remote_endpoint#[}"
+        if [[ "$remote_ip" == *']:'* ]]; then
+            remote_ip="${remote_ip%]:*}"
+        else
+            remote_ip="${remote_ip%:*}"
+        fi
+        [[ -n "$remote_ip" ]] && printf '%s\n' "$remote_ip"
+    done < <(ss -tnpH state established 2>/dev/null)
+    who -u 2>/dev/null | awk -v user="$username" '$1 == user { for (i = 1; i <= NF; i++) if ($i ~ /^\(.*\)$/) { gsub(/[()]/, "", $i); print $i } }'
+    } | sort -u
+}
+
+ssh_user_connection_count() {
+    local username="$1" count
+    count="$(ssh_user_remote_ips "$username" | awk 'END {print NR+0}')"
+    printf '%s\n' "$count"
+}
+
+show_ssh_connection_details() {
+    local username="$1" password="${2:-}" limit expiry ports domain
+    read_ssh_user_data "$username" || return 1
+    limit="$SSH_USER_LIMIT"
+    expiry="$SSH_USER_EXPIRY"
+    ports="$(/usr/sbin/sshd -T 2>/dev/null | awk '$1 == "port" {printf "%s%s", separator, $2; separator=", "}')"
+    [[ -n "$ports" ]] || ports="22 (predeterminado)"
+    domain="$(cat "$CONFIG_DIR/domain" 2>/dev/null || printf 'IP del servidor')"
+    printf '\nUsuario: %s\n' "$username"
+    [[ -n "$password" ]] && printf 'Contraseña: %s\n' "$password"
+    printf 'Protocolo: SSH sobre TCP\nServidor: %s\nPuerto(s) SSH: %s\n' "$domain" "$ports"
+    printf 'Vencimiento: %s\n' "$(ssh_user_expiry_text "$expiry")"
+    printf 'Límite simultáneo de sesiones: %s\n' "$limit"
+}
+
+list_ssh_users() {
+    local username expiry limit connected index=0
+    local -a users=()
+    mapfile -t users < <(ssh_user_names)
+    if (( ${#users[@]} == 0 )); then
+        printf 'No hay usuarios SSH administrados por este script.\n'
+        return
+    fi
+    printf '%-4s %-20s %-34s %-18s %s\n' 'N.º' 'USUARIO' 'VENCIMIENTO / TIEMPO RESTANTE' 'IP ACTIVAS' 'LÍMITE'
+    printf '%s\n' '--------------------------------------------------------------------------------------------------------------'
+    for username in "${users[@]}"; do
+        ((index += 1))
+        if ! read_ssh_user_data "$username" || ! getent passwd "$username" >/dev/null; then
+            printf '%-4s %-20s %s\n' "$index" "$username" 'cuenta o registro no disponible'
+            continue
+        fi
+        expiry="$SSH_USER_EXPIRY"
+        limit="$SSH_USER_LIMIT"
+        connected="$(ssh_user_connection_count "$username")"
+        printf '%-4s %-20s %-34s %s/%s\n' "$index" "$username" "$(ssh_user_expiry_text "$expiry")" "$connected" "$limit"
+    done
+}
+
+choose_ssh_user() {
+    local prompt="$1" choice index=0 username
+    local -a users=()
+    mapfile -t users < <(ssh_user_names)
+    if (( ${#users[@]} == 0 )); then
+        printf 'No hay usuarios SSH administrados por este script.\n'
+        return 1
+    fi
+    for username in "${users[@]}"; do
+        ((index += 1))
+        printf '  %s) %s\n' "$index" "$username"
+    done
+    read -r -p "$prompt" choice || return 1
+    [[ "$choice" == 0 ]] && return 1
+    [[ "$choice" =~ ^[1-9][0-9]*$ ]] && (( choice <= ${#users[@]} )) || {
+        printf 'Selección inválida.\n'
+        return 1
+    }
+    SSH_SELECTED_USER="${users[choice-1]}"
+}
+
+create_ssh_user() {
+    local username password password_confirm duration expiry limit pam_config
+    (( EUID == 0 )) || { printf '%sEsta opción requiere root.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+    ensure_ssh_users_dir || { pause; return; }
+    pam_config="$(grep -E '^[[:space:]]*session[[:space:]].*pam_limits\.so' /etc/pam.d/sshd /etc/pam.d/common-session 2>/dev/null || true)"
+    if [[ -z "$pam_config" ]] || ! /usr/sbin/sshd -T 2>/dev/null | grep -Fxq 'usepam yes'; then
+        printf '%sPAM no tiene pam_limits.so activo; no puedo garantizar el límite de conexiones simultáneas.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    read -r -p 'Nombre del usuario (a-z, 0-9, guion o guion bajo): ' username || return
+    username="${username,,}"
+    if [[ ! "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || getent passwd "$username" >/dev/null; then
+        printf '%sNombre inválido o ya existente en el sistema.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ -e "$SSH_USERS_DIR/$username.meta" ]]; then
+        printf '%sYa existe un registro administrado para ese usuario.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    read -r -s -p 'Contraseña: ' password </dev/tty || { printf '\n'; return; }
+    printf '\n'
+    read -r -s -p 'Confirma la contraseña: ' password_confirm </dev/tty || { printf '\n'; return; }
+    printf '\n'
+    if [[ -z "$password" || "$password" == *:* || "$password" != "$password_confirm" ]]; then
+        unset password password_confirm
+        printf '%sLa contraseña está vacía, contiene “:” o no coincide.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    unset password_confirm
+    read -r -p 'Duración (#d días, #m meses, #h horas; ejemplo 30d): ' duration || { unset password; return; }
+    if ! expiry="$(parse_ssh_duration "$duration" "$(date +%s)")"; then
+        unset password
+        printf '%sDuración inválida. Usa, por ejemplo, 30d, 2m o 12h.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    read -r -p 'Límite de conexiones simultáneas (Enter = 1): ' limit || { unset password; return; }
+    limit="${limit:-1}"
+    if [[ ! "$limit" =~ ^[1-9][0-9]*$ ]] || (( limit > 1000 )); then
+        unset password
+        printf '%sEl límite debe ser un número entre 1 y 1000.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if ! useradd --create-home --shell /bin/bash "$username"; then
+        unset password
+        printf '%sNo pude crear la cuenta SSH; no se modificó ninguna cuenta existente.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if ! printf '%s:%s\n' "$username" "$password" | chpasswd; then
+        userdel -r "$username" >/dev/null 2>&1 || true
+        unset password
+        printf '%sNo pude configurar la contraseña; retiré la cuenta recién creada.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if ! save_ssh_user_data "$username" "$expiry" "$limit"; then
+        userdel -r "$username" >/dev/null 2>&1 || true
+        rm -f -- "$SSH_USERS_DIR/$username.meta"
+        unset password
+        printf '%sNo pude guardar el vencimiento del usuario; retiré la cuenta para no dejarla sin administrar.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if ! write_ssh_limits; then
+        userdel -r "$username" >/dev/null 2>&1 || true
+        rm -f -- "$SSH_USERS_DIR/$username.meta"
+        unset password
+        pause
+        return
+    fi
+    show_ssh_connection_details "$username" "$password"
+    unset password
+    printf '\nGuarda estos datos ahora; la contraseña no se almacena en el sistema.\n'
+    pause
+}
+
+renew_ssh_user() {
+    local username duration base_epoch expiry limit
+    (( EUID == 0 )) || { printf '%sEsta opción requiere root.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+    ensure_ssh_users_dir || { pause; return; }
+    list_ssh_users
+    choose_ssh_user 'Número del usuario para renovar (0 cancela): ' || { pause; return; }
+    username="$SSH_SELECTED_USER"
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] && getent passwd "$username" >/dev/null && read_ssh_user_data "$username" || { printf 'No pude validar esa cuenta.\n'; pause; return; }
+    base_epoch="$SSH_USER_EXPIRY"
+    (( base_epoch > $(date +%s) )) || base_epoch="$(date +%s)"
+    limit="$SSH_USER_LIMIT"
+    read -r -p 'Tiempo adicional (#d días, #m meses, #h horas): ' duration || return
+    if ! expiry="$(parse_ssh_duration "$duration" "$base_epoch")"; then
+        printf '%sDuración inválida. Usa, por ejemplo, 30d, 2m o 12h.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    read -r -p "Límite simultáneo de conexiones (Enter conserva $limit): " limit || return
+    limit="${limit:-$SSH_USER_LIMIT}"
+    if [[ ! "$limit" =~ ^[1-9][0-9]*$ ]] || (( limit > 1000 )) || ! save_ssh_user_data "$username" "$expiry" "$limit" || ! write_ssh_limits; then
+        printf '%sNo pude renovar la cuenta ni actualizar sus límites.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    printf '%sUsuario %s renovado.%s\n' "$C_GREEN" "$username" "$C_RESET"
+    show_ssh_connection_details "$username"
+    pause
+}
+
+delete_ssh_user_account() {
+    local username="$1"
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || return 1
+    if getent passwd "$username" >/dev/null; then
+        pkill -KILL -u "$username" 2>/dev/null || true
+        userdel -r "$username" || return 1
+    fi
+    rm -f -- "$SSH_USERS_DIR/$username.meta"
+}
+
+delete_ssh_user() {
+    local username confirmation
+    (( EUID == 0 )) || { printf '%sEsta opción requiere root.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+    ensure_ssh_users_dir || { pause; return; }
+    list_ssh_users
+    choose_ssh_user 'Número del usuario que se eliminará (0 cancela): ' || { pause; return; }
+    username="$SSH_SELECTED_USER"
+    read -r -p "Escribe ELIMINAR para borrar $username y su carpeta personal: " confirmation || return
+    if [[ "$confirmation" != ELIMINAR ]] || ! delete_ssh_user_account "$username" || ! write_ssh_limits; then
+        printf '%sNo se eliminó la cuenta o no se pudieron actualizar los límites.%s\n' "$C_RED" "$C_RESET"
+    else
+        printf '%sUsuario %s eliminado.%s\n' "$C_GREEN" "$username" "$C_RESET"
+    fi
+    pause
+}
+
+show_online_ssh_users() {
+    local username ips connected limit online=0
+    ensure_ssh_users_dir || { pause; return; }
+    printf '%-20s %-12s %s\n' 'USUARIO' 'IP ACTIVAS' 'LÍMITE'
+    for username in $(ssh_user_names); do
+        read_ssh_user_data "$username" || continue
+        limit="$SSH_USER_LIMIT"
+        ips="$(ssh_user_remote_ips "$username" | paste -sd ', ' -)"
+        connected="$(ssh_user_connection_count "$username")"
+        if (( connected > 0 )); then
+            printf '%-20s %-12s %s/%s  %s\n' "$username" "$connected" "$connected" "$limit" "$ips"
+            ((online += 1))
+        fi
+    done
+    (( online > 0 )) || printf 'No hay usuarios SSH conectados en este momento.\n'
+    pause
+}
+
+expire_ssh_users() {
+    local username expired=0
+    [[ -f "$SSH_USERS_DIR/$OWNERSHIP_MARKER" ]] && grep -Fxq "$MARKER_VALUE" "$SSH_USERS_DIR/$OWNERSHIP_MARKER" || return 0
+    systemctl is-enabled --quiet oxgi-ssh-autokill.timer 2>/dev/null || return 0
+    while IFS= read -r username; do
+        read_ssh_user_data "$username" || continue
+        if (( SSH_USER_EXPIRY <= $(date +%s) )); then
+            if delete_ssh_user_account "$username"; then
+                printf 'Eliminado usuario SSH vencido: %s\n' "$username"
+                ((expired += 1))
+            fi
+        fi
+    done < <(ssh_user_names)
+    (( expired == 0 )) || write_ssh_limits
+}
+
+toggle_ssh_autokill() {
+    local choice service_temp timer_temp
+    (( EUID == 0 )) || { printf '%sEsta opción requiere root.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+    ensure_ssh_users_dir || { pause; return; }
+    if { [[ -e "$SSH_AUTOKILL_SERVICE" || -L "$SSH_AUTOKILL_SERVICE" ]] && { [[ -L "$SSH_AUTOKILL_SERVICE" ]] || ! grep -Fxq '# OXGI_MANAGED_SSH_AUTOKILL' "$SSH_AUTOKILL_SERVICE"; }; } ||
+        { [[ -e "$SSH_AUTOKILL_TIMER" || -L "$SSH_AUTOKILL_TIMER" ]] && { [[ -L "$SSH_AUTOKILL_TIMER" ]] || ! grep -Fxq '# OXGI_MANAGED_SSH_AUTOKILL' "$SSH_AUTOKILL_TIMER"; }; }; then
+        printf '%sYa existe una unidad con ese nombre que no pertenece a este script; no la modificaré.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if systemctl is-enabled --quiet oxgi-ssh-autokill.timer 2>/dev/null; then
+        read -r -p 'Auto kill está ACTIVADO. Escribe DESACTIVAR para apagarlo: ' choice || return
+        [[ "$choice" == DESACTIVAR ]] || { printf 'Sin cambios.\n'; pause; return; }
+        systemctl disable --now oxgi-ssh-autokill.timer >/dev/null 2>&1 || { printf '%sNo pude detener el temporizador.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+        rm -f -- "$SSH_AUTOKILL_TIMER" "$SSH_AUTOKILL_SERVICE"
+        systemctl daemon-reload
+        printf '%sAuto kill desactivado.%s\n' "$C_GREEN" "$C_RESET"
+    else
+        service_temp="$(mktemp /etc/systemd/system/.oxgi-ssh-autokill.service.XXXXXX)" || { pause; return; }
+        timer_temp="$(mktemp /etc/systemd/system/.oxgi-ssh-autokill.timer.XXXXXX)" || { rm -f -- "$service_temp"; pause; return; }
+        cat > "$service_temp" <<EOF
+[Unit]
+Description=Eliminar usuarios SSH OXGI vencidos
+# OXGI_MANAGED_SSH_AUTOKILL
+
+[Service]
+Type=oneshot
+ExecStart=$APP_ROOT/menu.sh --expire-ssh-users
+EOF
+        cat > "$timer_temp" <<'EOF'
+[Unit]
+Description=Revisar vencimiento de usuarios SSH OXGI
+# OXGI_MANAGED_SSH_AUTOKILL
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=oxgi-ssh-autokill.service
+
+[Install]
+WantedBy=timers.target
+EOF
+        chmod 0644 "$service_temp" "$timer_temp"
+        chown root:root "$service_temp" "$timer_temp"
+        if ! mv -f -- "$service_temp" "$SSH_AUTOKILL_SERVICE"; then
+            rm -f -- "$service_temp" "$timer_temp"
+            printf '%sNo pude instalar las unidades del temporizador.%s\n' "$C_RED" "$C_RESET"
+            pause
+            return
+        fi
+        if ! mv -f -- "$timer_temp" "$SSH_AUTOKILL_TIMER"; then
+            rm -f -- "$SSH_AUTOKILL_SERVICE" "$timer_temp"
+            printf '%sNo pude instalar las unidades del temporizador.%s\n' "$C_RED" "$C_RESET"
+            pause
+            return
+        fi
+        if ! systemctl daemon-reload || ! systemctl enable --now oxgi-ssh-autokill.timer; then
+            rm -f -- "$SSH_AUTOKILL_TIMER" "$SSH_AUTOKILL_SERVICE"
+            systemctl daemon-reload
+            printf '%sNo pude activar el temporizador de auto kill.%s\n' "$C_RED" "$C_RESET"
+            pause
+            return
+        fi
+        printf '%sAuto kill activado: revisará vencimientos cada minuto y borrará la cuenta y su carpeta personal.%s\n' "$C_GREEN" "$C_RESET"
+    fi
+    pause
+}
+
+delete_all_ssh_users() {
+    local username confirmation failed=0
+    (( EUID == 0 )) || { printf '%sEsta opción requiere root.%s\n' "$C_RED" "$C_RESET"; pause; return; }
+    ensure_ssh_users_dir || { pause; return; }
+    list_ssh_users
+    printf '\nSe borrarán todas las cuentas SSH administradas y sus carpetas personales.\n'
+    read -r -p 'Escribe ELIMINAR TODOS para confirmar: ' confirmation || return
+    [[ "$confirmation" == 'ELIMINAR TODOS' ]] || { printf 'Cancelado.\n'; pause; return; }
+    while IFS= read -r username; do
+        delete_ssh_user_account "$username" || failed=1
+    done < <(ssh_user_names)
+    write_ssh_limits || failed=1
+    if (( failed )); then
+        printf '%sAlgunas cuentas no se pudieron eliminar; revisa el sistema.%s\n' "$C_RED" "$C_RESET"
+    else
+        printf '%sSe eliminaron todos los usuarios SSH administrados.%s\n' "$C_GREEN" "$C_RESET"
+    fi
+    pause
+}
+
+show_ssh_users_menu() {
+    local choice
+    if (( EUID != 0 )); then
+        printf '%sAbre el menú como root para administrar usuarios SSH.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    while true; do
+        show_header
+        printf '%sAdministrar usuarios SSH%s\n\n' "$C_BOLD" "$C_RESET"
+        printf '  1) Crear usuario\n'
+        printf '  2) Renovar usuario\n'
+        printf '  3) Listar usuarios\n'
+        printf '  4) Eliminar usuario\n'
+        printf '  5) Usuarios en línea\n'
+        if systemctl is-enabled --quiet oxgi-ssh-autokill.timer 2>/dev/null; then
+            printf '  6) Auto kill: ACTIVADO (desactivar)\n'
+        else
+            printf '  6) Auto kill: DESACTIVADO (activar)\n'
+        fi
+        printf '  7) Eliminar todos los usuarios\n'
+        printf '  0) Volver\n\n'
+        choice=""
+        IFS= read -r -p 'Selecciona una opción: ' choice || return
+        case "$choice" in
+            1) create_ssh_user ;;
+            2) renew_ssh_user ;;
+            3) ensure_ssh_users_dir && list_ssh_users; pause ;;
+            4) delete_ssh_user ;;
+            5) show_online_ssh_users ;;
+            6) toggle_ssh_autokill ;;
+            7) delete_all_ssh_users ;;
+            0) return ;;
+            *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
+        esac
+    done
+}
+
+show_v2ray_users_menu() {
+    local choice
+    while true; do
+        show_header
+        printf '%sAdministrar usuarios V2Ray/Xray%s\n\n' "$C_BOLD" "$C_RESET"
+        printf '  1) Crear usuario\n'
+        printf '  2) Renovar usuario\n'
+        printf '  3) Listar usuarios\n'
+        printf '  4) Eliminar usuario\n'
+        printf '  5) Usuarios en línea\n'
+        printf '  6) Auto kill (eliminar usuarios vencidos)\n'
+        printf '  7) Eliminar todos los usuarios\n'
+        printf '  0) Volver\n\n'
+        choice=""
+        IFS= read -r -p 'Selecciona una opción: ' choice || return
+        case "$choice" in
+            1|2|3|4|5|6|7) not_ready ;;
+            0) return ;;
+            *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
+        esac
+    done
 }
 
 show_users_menu() {
@@ -606,7 +1173,8 @@ show_users_menu() {
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
-            1|2) not_ready ;;
+            1) show_ssh_users_menu ;;
+            2) show_v2ray_users_menu ;;
             0) return ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
@@ -667,5 +1235,11 @@ show_main_menu() {
         esac
     done
 }
+
+if [[ "${1:-}" == "--expire-ssh-users" ]]; then
+    (( EUID == 0 )) || exit 1
+    expire_ssh_users
+    exit 0
+fi
 
 show_main_menu
