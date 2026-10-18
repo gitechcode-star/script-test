@@ -114,13 +114,14 @@ check_system() {
 show_header() {
     clear 2>/dev/null || true
 
-    printf '%s  ____   __  __   _____    _       
-    printf '%s / __ \  \ \/ /  / ____|  | |      
-    printf '%s| |  | |  \  /  | |  __   | |      
-    printf '%s| |__| |  /  \  | | |_ |  | |      
-    printf '%s \____/  /_/\_\  |_____|  |_|   vps - script
+    printf '%s   ___   __  __   ____   ___          __     __  ____    ____     
+    printf '%s  / _ \  \ \/ /  / ___| |_ _|         \ \   / / |  _ \  / ___| 
+    printf '%s | | | |  \  /  | |  _   | |   _____   \ \ / /  | |_) | \___ \ 
+    printf '%s | |_| |  /  \  | |_| |  | |  |_____|   \ V /   |  __/   ___) | 
+    printf '%s  \___/  /_/\_\  \____| |___|            \_/    |_|     |____/ 
     printf '%s                                          
 }
+
 show_main_menu() {
     show_header
     printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW" "$C_RESET"
