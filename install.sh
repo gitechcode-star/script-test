@@ -3,25 +3,31 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.0"
+readonly SCRIPT_VERSION="0.2.1"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
+readonly REPO_RAW_URL="https://raw.githubusercontent.com/gitechcode-star/script-test/main"
 readonly OWNERSHIP_MARKER=".managed-by-vpn-ssh-admin"
 readonly MARKER_VALUE="Managed by VPN-SSH-Admin"
 
-script_path="${BASH_SOURCE[0]}"
-while [[ -L "$script_path" ]]; do
-    script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
-    link_target="$(readlink -- "$script_path")"
-    if [[ "$link_target" == /* ]]; then
-        script_path="$link_target"
-    else
-        script_path="$script_dir/$link_target"
-    fi
-done
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+script_path="${BASH_SOURCE[0]:-}"
+if [[ -n "$script_path" ]]; then
+    while [[ -L "$script_path" ]]; do
+        script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+        link_target="$(readlink -- "$script_path")"
+        if [[ "$link_target" == /* ]]; then
+            script_path="$link_target"
+        else
+            script_path="$script_dir/$link_target"
+        fi
+    done
+    readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+else
+    # When run as `curl ... | bash`, Bash has no script filename to resolve.
+    readonly SCRIPT_DIR=""
+fi
 
 if [[ -t 1 ]]; then
     readonly C_RESET=$'\033[0m'
@@ -48,7 +54,7 @@ fail() {
 
 pause() {
     printf '\nPresiona Enter para continuar...'
-    IFS= read -r _ || true
+    IFS= read -r _ </dev/tty || true
 }
 
 check_system() {
@@ -66,7 +72,7 @@ check_system() {
         fail "solo se admite Ubuntu 22.04 LTS o Ubuntu 24.04 LTS."
         return 1
     fi
-    if [[ ! -t 0 ]]; then
+    if [[ ! -r /dev/tty ]]; then
         fail "la instalación requiere una terminal interactiva."
         return 1
     fi
@@ -99,7 +105,7 @@ is_valid_domain() {
 prompt_domain() {
     local input_domain domain
     while true; do
-        read -r -p 'Dominio o subdominio apuntando a esta VPS (DNS A/AAAA): ' input_domain || return 1
+        read -r -p 'Dominio o subdominio apuntando a esta VPS (DNS A/AAAA): ' input_domain </dev/tty || return 1
         domain="${input_domain,,}"
         domain="${domain%.}"
         if is_valid_domain "$domain"; then
@@ -120,7 +126,8 @@ check_managed_dir() {
 }
 
 install_current_version() {
-    local domain source_menu source_installer menu_temp installer_temp version_temp domain_temp confirmation
+    local domain source_menu source_installer source_dir temp_source_dir menu_temp installer_temp version_temp domain_temp confirmation package_version
+    temp_source_dir=""
 
     if ! domain="$(prompt_domain)"; then
         printf '\nInstalación cancelada.\n'
@@ -130,17 +137,38 @@ install_current_version() {
 
     printf '\n%sAceptación de condiciones%s\n' "$C_BOLD" "$C_RESET"
     printf 'Confirma que aceptas las condiciones y políticas mostradas en el menú.\n'
-    read -r -p 'Escribe ACEPTO para continuar: ' confirmation || return
+    read -r -p 'Escribe ACEPTO para continuar: ' confirmation </dev/tty || return
     if [[ "$confirmation" != "ACEPTO" ]]; then
         printf 'No se aceptaron las condiciones. Instalación cancelada.\n'
         pause
         return
     fi
 
-    source_menu="$SCRIPT_DIR/menu.sh"
-    source_installer="$SCRIPT_DIR/install.sh"
+    source_dir="$SCRIPT_DIR"
+    [[ -n "$source_dir" ]] || source_dir="$PWD"
+    if [[ -z "$source_dir" || ! -f "$source_dir/menu.sh" || ! -f "$source_dir/install.sh" ]]; then
+        temp_source_dir="$(mktemp -d)"
+        if ! curl -fsSL "$REPO_RAW_URL/menu.sh" -o "$temp_source_dir/menu.sh" ||
+            ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$temp_source_dir/install.sh"; then
+            fail "no pude descargar menu.sh e install.sh desde el repositorio." || true
+            rm -rf -- "$temp_source_dir"
+            pause
+            return
+        fi
+        package_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$temp_source_dir/install.sh" | head -n 1)"
+        if [[ "$package_version" != "$SCRIPT_VERSION" ]]; then
+            fail "la versión descargada ($package_version) no coincide con el instalador ejecutado ($SCRIPT_VERSION). Vuelve a descargar install.sh e inténtalo otra vez." || true
+            rm -rf -- "$temp_source_dir"
+            pause
+            return
+        fi
+        source_dir="$temp_source_dir"
+    fi
+    source_menu="$source_dir/menu.sh"
+    source_installer="$source_dir/install.sh"
     if [[ ! -f "$source_menu" || ! -r "$source_menu" || ! -f "$source_installer" || ! -r "$source_installer" ]]; then
-        fail "se requieren install.sh y menu.sh en la misma carpeta." || true
+        fail "se requieren install.sh y menu.sh en la misma carpeta o en el repositorio configurado." || true
+        [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
         pause
         return
     fi
@@ -148,6 +176,7 @@ install_current_version() {
     if [[ -e "$LAUNCHER" || -L "$LAUNCHER" ]]; then
         if [[ ! -L "$LAUNCHER" || "$(readlink -- "$LAUNCHER")" != "$APP_ROOT/menu.sh" ]]; then
             fail "$LAUNCHER ya existe y no pertenece a este instalador; no se modificó." || true
+            [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
             pause
             return
         fi
@@ -155,17 +184,20 @@ install_current_version() {
     if [[ -e "$INSTALLER_LAUNCHER" || -L "$INSTALLER_LAUNCHER" ]]; then
         if [[ ! -L "$INSTALLER_LAUNCHER" || "$(readlink -- "$INSTALLER_LAUNCHER")" != "$APP_ROOT/install.sh" ]]; then
             fail "$INSTALLER_LAUNCHER ya existe y no pertenece a este instalador; no se modificó." || true
+            [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
             pause
             return
         fi
     fi
     if ! check_managed_dir "$APP_ROOT"; then
         fail "$APP_ROOT existe y no está marcado como propiedad de este instalador; no se modificó." || true
+        [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
         pause
         return
     fi
     if ! check_managed_dir "$CONFIG_DIR"; then
         fail "$CONFIG_DIR existe y no está marcado como propiedad de este instalador; no se modificó." || true
+        [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
         pause
         return
     fi
@@ -204,6 +236,7 @@ install_current_version() {
     if [[ ! -L "$INSTALLER_LAUNCHER" ]]; then
         ln -s "$APP_ROOT/install.sh" "$INSTALLER_LAUNCHER"
     fi
+    [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
 
     printf '\n%sInstalación completada.%s\n' "$C_GREEN" "$C_RESET"
     printf 'Versión instalada: %s\n' "$SCRIPT_VERSION"
@@ -229,7 +262,7 @@ update_installer_menu() {
     fi
 
     printf 'Sube el nuevo install.sh a la VPS y escribe aquí su ruta local.\n'
-    read -r -e -p 'Ruta del nuevo install.sh: ' update_file || return
+    read -r -e -p 'Ruta del nuevo install.sh: ' update_file </dev/tty || return
     if [[ ! -f "$update_file" || ! -r "$update_file" || "$update_file" -ef "$target" ]]; then
         fail "la ruta no contiene un archivo de actualización válido." || true
         pause
@@ -256,7 +289,7 @@ update_installer_menu() {
 
     printf '\nVersión instalada: %s\n' "$SCRIPT_VERSION"
     printf 'Nueva versión: %s\n' "$new_version"
-    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú: ' confirmation || return
+    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú: ' confirmation </dev/tty || return
     if [[ "$confirmation" != "ACTUALIZAR" ]]; then
         printf 'Actualización cancelada.\n'
         pause
@@ -294,7 +327,7 @@ show_version_menu() {
     printf '2 - INSTALAR ESTA VERSIÓN\n\n'
 
     local choice
-    read -r -p 'Selecciona una opción: ' choice || return
+    read -r -p 'Selecciona una opción: ' choice </dev/tty || return
     case "$choice" in
         1) return ;;
         2) install_current_version ;;
@@ -310,7 +343,7 @@ main() {
     local choice
     while true; do
         show_main_menu
-        read -r -p 'Selecciona una opción: ' choice || return 0
+        read -r -p 'Selecciona una opción: ' choice </dev/tty || return 0
         case "$choice" in
             1) install_current_version ;;
             2) show_version_menu ;;
