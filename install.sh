@@ -351,7 +351,11 @@ update_installer_menu() {
         return
     fi
 
-    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
+    if check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
+        target="$APP_ROOT/install.sh"
+        menu_target="$APP_ROOT/menu.sh"
+        info_target="$APP_ROOT/script-info.sh"
+    elif [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
         target="$SCRIPT_DIR/install.sh"
         menu_target="$SCRIPT_DIR/menu.sh"
         info_target="$SCRIPT_DIR/script-info.sh"
@@ -359,10 +363,6 @@ update_installer_menu() {
         target="$PWD/install.sh"
         menu_target="$PWD/menu.sh"
         info_target="$PWD/script-info.sh"
-    elif check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
-        target="$APP_ROOT/install.sh"
-        menu_target="$APP_ROOT/menu.sh"
-        info_target="$APP_ROOT/script-info.sh"
     elif [[ ! -e "$INSTALLER_LAUNCHER" && ! -L "$INSTALLER_LAUNCHER" ]]; then
         target="$INSTALLER_LAUNCHER"
         menu_target="$(dirname -- "$INSTALLER_LAUNCHER")/menu.sh"
