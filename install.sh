@@ -130,6 +130,9 @@ show_main_menu() {
     printf '1 - INSTALAR SCRIPT\n'
     printf '2 - VERIFICAR VERSIÓN DEL SCRIPT\n'
     printf '3 - ACTUALIZAR MENÚ DE INSTALACIÓN\n'
+    if is_script_installed; then
+        printf '4 - CANCELAR Y VOLVER AL MENÚ DE ADMINISTRACIÓN\n'
+    fi
     printf '0 - SALIR\n\n'
 }
 
@@ -141,6 +144,7 @@ prompt_domain() {
     local input_domain domain
     while true; do
         read -r -p 'Dominio o subdominio apuntando a esta VPS (DNS A/AAAA): ' input_domain </dev/tty || return 1
+        [[ -n "$input_domain" ]] || return 1
         domain="${input_domain,,}"
         domain="${domain%.}"
         if is_valid_domain "$domain"; then
@@ -247,19 +251,27 @@ check_managed_dir() {
     fi
 }
 
+is_script_installed() {
+    [[ -d "$APP_ROOT" && -f "$APP_ROOT/$OWNERSHIP_MARKER" ]] || return 1
+    grep -Fxq "$MARKER_VALUE" "$APP_ROOT/$OWNERSHIP_MARKER" || return 1
+    [[ -f "$APP_ROOT/menu.sh" && -f "$APP_ROOT/install.sh" && -f "$APP_ROOT/script-info.sh" ]]
+}
+
 install_current_version() {
     local domain source_menu source_installer source_info source_dir temp_source_dir menu_temp installer_temp info_temp domain_temp confirmation package_version
     temp_source_dir=""
 
-    if ! domain="$(prompt_domain)"; then
-        printf '\nInstalación cancelada.\n'
-        pause
-        return
-    fi
-    if ! verify_domain_dns "$domain"; then
-        pause
-        return
-    fi
+    while true; do
+        if ! domain="$(prompt_domain)"; then
+            printf '\nInstalación cancelada.\n'
+            pause
+            return
+        fi
+        if verify_domain_dns "$domain"; then
+            break
+        fi
+        printf '\nVuelve a escribir el dominio correcto. Deja el campo vacío para cancelar.\n'
+    done
 
     printf '\n%sAceptación de condiciones%s\n' "$C_BOLD" "$C_RESET"
     printf 'Confirma que aceptas las condiciones y políticas mostradas en el menú.\n'
@@ -578,6 +590,13 @@ main() {
             1) install_current_version ;;
             2) show_version_menu ;;
             3) update_installer_menu ;;
+            4)
+                if is_script_installed; then
+                    exec bash "$APP_ROOT/menu.sh"
+                fi
+                printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"
+                pause
+                ;;
             0) printf 'Hasta luego.\n'; return 0 ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac

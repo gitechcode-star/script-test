@@ -83,6 +83,25 @@ not_ready() {
     pause
 }
 
+open_installer_menu() {
+    local installer="$APP_ROOT/install.sh"
+
+    if [[ ! -f "$installer" || ! -r "$installer" ]]; then
+        printf '%sNo encontré el instalador en %s.%s\n' "$C_RED" "$installer" "$C_RESET"
+        pause
+        return
+    fi
+
+    if (( EUID == 0 )); then
+        bash "$installer"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo bash "$installer"
+    else
+        printf '%sAbre el menú como root para ejecutar el instalador.%s\n' "$C_RED" "$C_RESET"
+        pause
+    fi
+}
+
 uninstall_system() {
     show_header
     printf '%sDesinstalar este sistema%s\n\n' "$C_BOLD" "$C_RESET"
@@ -201,6 +220,7 @@ show_main_menu() {
         printf '  5) Copias de seguridad\n'
         printf '  6) Actualizar el sistema\n'
         printf '  7) Desinstalar este sistema\n'
+        printf '  8) Abrir menú de instalación\n'
         printf '  0) Salir\n\n'
 
         if (( EUID != 0 )); then
@@ -214,6 +234,7 @@ show_main_menu() {
             2) show_services_menu ;;
             3|4|5|6) not_ready ;;
             7) uninstall_system ;;
+            8) open_installer_menu ;;
             0) printf '%sHasta luego.%s\n' "$C_GREEN" "$C_RESET"; return ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
