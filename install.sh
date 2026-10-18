@@ -259,10 +259,13 @@ install_current_version() {
 }
 
 update_installer_menu() {
-    local temp_dir update_file target new_version current_version temp backup_temp confirmation target_dir version_temp
+    local temp_dir new_installer new_menu target menu_target new_version menu_version confirmation
+    local target_dir menu_target_dir installer_temp menu_temp backup_temp menu_backup_temp version_temp
     temp_dir="$(mktemp -d)"
-    update_file="$temp_dir/install.sh"
+    new_installer="$temp_dir/install.sh"
+    new_menu="$temp_dir/menu.sh"
     target=""
+    menu_target=""
 
     if (( EUID != 0 )); then
         fail "se requieren permisos de root para actualizar el instalador." || true
@@ -271,25 +274,30 @@ update_installer_menu() {
         return
     fi
 
-    printf 'Buscando la versión publicada del menú de instalación...\n'
-    if ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$update_file"; then
-        fail "no pude descargar install.sh desde el repositorio. Comprueba la conexión y que la versión nueva ya esté publicada." || true
+    printf 'Descargando el menú de instalación y los archivos actualizados...\n'
+    if ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$new_installer" ||
+        ! curl -fsSL "$REPO_RAW_URL/menu.sh" -o "$new_menu"; then
+        fail "no pude descargar install.sh y menu.sh del repositorio. Comprueba la conexión y que ambos archivos estén publicados." || true
         rm -rf -- "$temp_dir"
         pause
         return
     fi
-    if ! bash -n -- "$update_file" ||
-        ! grep -Fq 'readonly APP_NAME="OXGI - VPN SCRIPT"' "$update_file" ||
-        ! grep -Fq 'readonly SCRIPT_VERSION=' "$update_file" ||
-        ! grep -Fq 'main "$@"' "$update_file"; then
-        fail "la versión descargada no parece ser un instalador OXGI válido; no se modificó nada." || true
+    if ! bash -n -- "$new_installer" ||
+        ! grep -Fq 'readonly APP_NAME="OXGI - VPN SCRIPT"' "$new_installer" ||
+        ! grep -Fq 'readonly SCRIPT_VERSION=' "$new_installer" ||
+        ! grep -Fq 'main "$@"' "$new_installer" ||
+        ! bash -n -- "$new_menu" ||
+        ! grep -Fq 'readonly VERSION=' "$new_menu" ||
+        ! grep -Fq 'show_main_menu()' "$new_menu"; then
+        fail "los archivos descargados no parecen ser un paquete OXGI válido; no se modificó nada." || true
         rm -rf -- "$temp_dir"
         pause
         return
     fi
-    new_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$update_file" | head -n 1)"
-    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
-        fail "no se pudo leer una versión válida del instalador descargado." || true
+    new_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_installer" | head -n 1)"
+    menu_version="$(sed -n 's/^readonly VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_menu" | head -n 1)"
+    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || "$new_version" != "$menu_version" ]]; then
+        fail "las versiones de install.sh y menu.sh no coinciden o no son válidas; no se modificó nada." || true
         rm -rf -- "$temp_dir"
         pause
         return
@@ -298,13 +306,17 @@ update_installer_menu() {
     # Actualiza la copia desde la que se abrió el menú, incluso antes de instalar el VPN.
     if check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
         target="$APP_ROOT/install.sh"
+        menu_target="$APP_ROOT/menu.sh"
     elif [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
         target="$SCRIPT_DIR/install.sh"
+        menu_target="$SCRIPT_DIR/menu.sh"
     elif [[ -f "$PWD/install.sh" && ! -L "$PWD/install.sh" ]]; then
         target="$PWD/install.sh"
+        menu_target="$PWD/menu.sh"
     elif [[ ! -e "$INSTALLER_LAUNCHER" && ! -L "$INSTALLER_LAUNCHER" ]]; then
-        # Si se ejecutó con curl | bash y no hay copia local, instala un lanzador persistente.
+        # Si se ejecutó con curl | bash, instala el paquete completo en una ruta persistente.
         target="$INSTALLER_LAUNCHER"
+        menu_target="$(dirname -- "$INSTALLER_LAUNCHER")/menu.sh"
     else
         fail "no encontré una copia segura de install.sh para reemplazar. Descarga el instalador en esta VPS y vuelve a elegir esta opción." || true
         rm -rf -- "$temp_dir"
@@ -312,17 +324,17 @@ update_installer_menu() {
         return
     fi
 
-    current_version="$SCRIPT_VERSION"
-    printf '\nVersión actual del menú: %s\n' "$current_version"
-    printf 'Versión publicada: %s\n' "$new_version"
-    if [[ -f "$target" ]] && cmp -s -- "$update_file" "$target"; then
-        printf '\nEl menú ya está actualizado.\n'
+    printf '\nVersión actual del instalador: %s\n' "$SCRIPT_VERSION"
+    printf 'Versión publicada del paquete: %s\n' "$new_version"
+    printf 'Se actualizarán el menú completo y sus archivos en:\n  %s\n  %s\n' "$target" "$menu_target"
+    if [[ -f "$target" && -f "$menu_target" ]] &&
+        cmp -s -- "$new_installer" "$target" && cmp -s -- "$new_menu" "$menu_target"; then
+        printf '\nEl instalador y sus archivos ya están actualizados.\n'
         rm -rf -- "$temp_dir"
         pause
         return
     fi
-    printf 'Archivo que se actualizará: %s\n' "$target"
-    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú: ' confirmation </dev/tty || {
+    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú completo: ' confirmation </dev/tty || {
         rm -rf -- "$temp_dir"
         return
     }
@@ -334,17 +346,28 @@ update_installer_menu() {
     fi
 
     target_dir="$(dirname -- "$target")"
+    menu_target_dir="$(dirname -- "$menu_target")"
     if [[ "$target" == "$INSTALLER_LAUNCHER" ]]; then
         install -d -o root -g root -m 0755 "$target_dir"
     fi
-    temp="$(mktemp "$target_dir/.install-sh-update.XXXXXX")"
-    install -o root -g root -m 0750 "$update_file" "$temp"
+    install -d -o root -g root -m 0755 "$menu_target_dir"
+    installer_temp="$(mktemp "$target_dir/.install-sh-update.XXXXXX")"
+    menu_temp="$(mktemp "$menu_target_dir/.menu-sh-update.XXXXXX")"
+    install -o root -g root -m 0750 "$new_installer" "$installer_temp"
+    install -o root -g root -m 0750 "$new_menu" "$menu_temp"
+
     if [[ -f "$target" && ! -L "$target" ]]; then
         backup_temp="$(mktemp "$target_dir/.install-sh-backup.XXXXXX")"
         install -o root -g root -m 0750 "$target" "$backup_temp"
         mv -f -- "$backup_temp" "$target.bak"
     fi
-    mv -f -- "$temp" "$target"
+    if [[ -f "$menu_target" && ! -L "$menu_target" ]]; then
+        menu_backup_temp="$(mktemp "$menu_target_dir/.menu-sh-backup.XXXXXX")"
+        install -o root -g root -m 0750 "$menu_target" "$menu_backup_temp"
+        mv -f -- "$menu_backup_temp" "$menu_target.bak"
+    fi
+    mv -f -- "$installer_temp" "$target"
+    mv -f -- "$menu_temp" "$menu_target"
 
     if [[ "$target" == "$APP_ROOT/install.sh" ]]; then
         version_temp="$(mktemp "$APP_ROOT/.version.XXXXXX")"
@@ -354,13 +377,9 @@ update_installer_menu() {
     fi
     rm -rf -- "$temp_dir"
 
-    printf '\n%sMenú del instalador actualizado a %s.%s\n' "$C_GREEN" "$new_version" "$C_RESET"
-    if [[ "$target" == "$INSTALLER_LAUNCHER" ]]; then
-        printf 'Puedes abrirlo con: sudo oxgi-vpn-installer\n'
-    else
-        printf 'La copia anterior quedó en %s.bak.\n' "$target"
-        printf 'Los cambios aparecerán la próxima vez que abras ese instalador.\n'
-    fi
+    printf '\n%sMenú completo y archivos del paquete actualizados a %s.%s\n' "$C_GREEN" "$new_version" "$C_RESET"
+    printf 'Respaldos: %s.bak y %s.bak\n' "$target" "$menu_target"
+    printf 'Los cambios se verán al volver a abrir el instalador.\n'
     pause
 }
 show_version_menu() {
