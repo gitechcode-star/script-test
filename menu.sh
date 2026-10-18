@@ -61,8 +61,8 @@ if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([
     -z "${OXGI_COLOR_BRAND_BG:-}" || -z "${OXGI_COLOR_BRAND_FG:-}" || -z "${OXGI_COLOR_GREEN:-}" ||
     -z "${OXGI_COLOR_RED:-}" || -z "${OXGI_COLOR_YELLOW:-}" || -z "${OXGI_COLOR_CYAN:-}" ||
     -z "${OXGI_COLOR_BLUE:-}" || -z "${OXGI_COLOR_WHITE:-}" ||
-    [[ -z "${OXGI_LOGO_LINE_1:-}" || -z "${OXGI_LOGO_LINE_2:-}" || -z "${OXGI_LOGO_LINE_3:-}" ||
-        -z "${OXGI_LOGO_LINE_4:-}" || -z "${OXGI_LOGO_LINE_5:-}" ]] ||
+    -z "${OXGI_LOGO_LINE_1:-}" || -z "${OXGI_LOGO_LINE_2:-}" || -z "${OXGI_LOGO_LINE_3:-}" ||
+    -z "${OXGI_LOGO_LINE_4:-}" || -z "${OXGI_LOGO_LINE_5:-}" ]] ||
     ! declare -F oxgi_print_logo >/dev/null; then
     printf 'Error: script-info.sh no contiene un nombre y versión válidos.\n' >&2
     exit 1
