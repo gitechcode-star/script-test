@@ -82,12 +82,15 @@ check_system() {
 
 show_header() {
     clear 2>/dev/null || true
-    printf '%sOXGI%s %s-%s %sVPN SCRIPT%s\n\n' \
-        "$C_GREEN$C_BOLD" "$C_RESET" \
-        "$C_YELLOW$C_BOLD" "$C_RESET" \
-        "$C_BLUE$C_BOLD" "$C_RESET"
+    printf '%s%s%s\n' "$C_GREEN$C_BOLD" ' _____  \     /   ____   _____                          \     /  _____  |\    |          _____   _____   _____   _____   _____  _______' "$C_RESET"
+    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '/     \  \   /   / ___|    |                             \   /  |  _  \ | \   |         / ____| / ____| |  __ \    |    |  _  \    |   ' "$C_RESET"
+    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '|     |   \ /   | |  _     |            -------           \ /   | |_| | |  \  |         \___ \  | |     | |__) |    |    | |_| |    |   ' "$C_RESET"
+    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '|     |   / \   | |_| |    |                               V    |  __/  |   \ |          ___) | | |___  |  _  /    |    |  __/     |   ' "$C_RESET"
+    printf '%s%s%s\n' "$C_RED$C_BOLD" ' \_____/  /   \   \____|  _____                             |    |_|     |    \|         |____/   \____| |_| \_\  _____  |_|        |   ' "$C_RESET"
+    printf '%s%64s%s\n\n' "$C_YELLOW$C_BOLD" 'V2' "$C_RESET"
     printf '%sDESARROLLADO POR OXG%s    Versión %s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$SCRIPT_VERSION"
 }
+
 show_main_menu() {
     show_header
     printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW" "$C_RESET"
