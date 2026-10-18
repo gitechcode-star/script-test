@@ -6,9 +6,10 @@
 set -o nounset
 
 readonly APP_NAME="Administración VPN/SSH"
-readonly VERSION="0.1.0"
+readonly VERSION="0.2.0"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
+readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly STATE_DIR="/var/lib/vpn-ssh-admin"
 readonly LOG_DIR="/var/log/vpn-ssh-admin"
@@ -72,6 +73,9 @@ uninstall_system() {
     if [[ -L "$LAUNCHER" ]] && [[ "$(readlink -- "$LAUNCHER")" == "$APP_ROOT/menu.sh" ]]; then
         targets+=("$LAUNCHER")
     fi
+    if [[ -L "$INSTALLER_LAUNCHER" ]] && [[ "$(readlink -- "$INSTALLER_LAUNCHER")" == "$APP_ROOT/install.sh" ]]; then
+        targets+=("$INSTALLER_LAUNCHER")
+    fi
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" ]] && grep -Fxq '# Managed by VPN-SSH-Admin' "$SERVICE_UNIT"; then
         targets+=("$SERVICE_UNIT")
     fi
@@ -105,6 +109,7 @@ uninstall_system() {
         case "$path" in
             "$APP_ROOT"|"$CONFIG_DIR"|"$STATE_DIR"|"$LOG_DIR") rm -rf -- "$path" ;;
             "$LAUNCHER") rm -f -- "$path" ;;
+            "$INSTALLER_LAUNCHER") rm -f -- "$path" ;;
             "$SERVICE_UNIT") rm -f -- "$path" ;;
         esac
     done

@@ -3,12 +3,25 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.1.0"
+readonly SCRIPT_VERSION="0.2.0"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
+readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly OWNERSHIP_MARKER=".managed-by-vpn-ssh-admin"
 readonly MARKER_VALUE="Managed by VPN-SSH-Admin"
+
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+    script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+    link_target="$(readlink -- "$script_path")"
+    if [[ "$link_target" == /* ]]; then
+        script_path="$link_target"
+    else
+        script_path="$script_dir/$link_target"
+    fi
+done
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
 
 if [[ -t 1 ]]; then
     readonly C_RESET=$'\033[0m'
@@ -75,6 +88,7 @@ show_main_menu() {
     printf 'de tu proveedor y la legislación aplicable.\n\n'
     printf '1 - INSTALAR SCRIPT\n'
     printf '2 - VERIFICAR VERSIÓN DEL SCRIPT\n'
+    printf '3 - ACTUALIZAR MENÚ DE INSTALACIÓN\n'
     printf '0 - SALIR\n\n'
 }
 
@@ -106,7 +120,7 @@ check_managed_dir() {
 }
 
 install_current_version() {
-    local domain source_dir source_menu menu_temp version_temp domain_temp confirmation
+    local domain source_menu source_installer menu_temp installer_temp version_temp domain_temp confirmation
 
     if ! domain="$(prompt_domain)"; then
         printf '\nInstalación cancelada.\n'
@@ -123,10 +137,10 @@ install_current_version() {
         return
     fi
 
-    source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-    source_menu="$source_dir/menu.sh"
-    if [[ ! -f "$source_menu" || ! -r "$source_menu" ]]; then
-        fail "no se encontró menu.sh junto al instalador." || true
+    source_menu="$SCRIPT_DIR/menu.sh"
+    source_installer="$SCRIPT_DIR/install.sh"
+    if [[ ! -f "$source_menu" || ! -r "$source_menu" || ! -f "$source_installer" || ! -r "$source_installer" ]]; then
+        fail "se requieren install.sh y menu.sh en la misma carpeta." || true
         pause
         return
     fi
@@ -138,13 +152,20 @@ install_current_version() {
             return
         fi
     fi
+    if [[ -e "$INSTALLER_LAUNCHER" || -L "$INSTALLER_LAUNCHER" ]]; then
+        if [[ ! -L "$INSTALLER_LAUNCHER" || "$(readlink -- "$INSTALLER_LAUNCHER")" != "$APP_ROOT/install.sh" ]]; then
+            fail "$INSTALLER_LAUNCHER ya existe y no pertenece a este instalador; no se modificó." || true
+            pause
+            return
+        fi
+    fi
     if ! check_managed_dir "$APP_ROOT"; then
-        fail "$APP_ROOT existe y no está marcado como propiedad de este instalador; no se modificó."
+        fail "$APP_ROOT existe y no está marcado como propiedad de este instalador; no se modificó." || true
         pause
         return
     fi
     if ! check_managed_dir "$CONFIG_DIR"; then
-        fail "$CONFIG_DIR existe y no está marcado como propiedad de este instalador; no se modificó."
+        fail "$CONFIG_DIR existe y no está marcado como propiedad de este instalador; no se modificó." || true
         pause
         return
     fi
@@ -157,6 +178,10 @@ install_current_version() {
     menu_temp="$(mktemp "$APP_ROOT/.menu.XXXXXX")"
     install -o root -g root -m 0750 "$source_menu" "$menu_temp"
     mv -f -- "$menu_temp" "$APP_ROOT/menu.sh"
+
+    installer_temp="$(mktemp "$APP_ROOT/.installer.XXXXXX")"
+    install -o root -g root -m 0750 "$source_installer" "$installer_temp"
+    mv -f -- "$installer_temp" "$APP_ROOT/install.sh"
 
     version_temp="$(mktemp "$APP_ROOT/.version.XXXXXX")"
     printf '%s\n' "$SCRIPT_VERSION" > "$version_temp"
@@ -176,11 +201,82 @@ install_current_version() {
     if [[ ! -L "$LAUNCHER" ]]; then
         ln -s "$APP_ROOT/menu.sh" "$LAUNCHER"
     fi
+    if [[ ! -L "$INSTALLER_LAUNCHER" ]]; then
+        ln -s "$APP_ROOT/install.sh" "$INSTALLER_LAUNCHER"
+    fi
 
     printf '\n%sInstalación completada.%s\n' "$C_GREEN" "$C_RESET"
     printf 'Versión instalada: %s\n' "$SCRIPT_VERSION"
     printf 'Dominio guardado en %s/domain.\n' "$CONFIG_DIR"
     printf 'Abre el menú con: sudo vpn-ssh-admin\n'
+    printf 'Abre el instalador con: sudo oxgi-vpn-installer\n'
+    pause
+}
+
+update_installer_menu() {
+    local update_file target new_version temp version_temp backup_temp confirmation
+    target="$APP_ROOT/install.sh"
+
+    if (( EUID != 0 )); then
+        fail "se requieren permisos de root para actualizar el instalador." || true
+        pause
+        return
+    fi
+    if ! check_managed_dir "$APP_ROOT" || [[ ! -f "$target" || -L "$target" ]]; then
+        fail "no encontré un instalador administrado en $APP_ROOT. Instala primero el script." || true
+        pause
+        return
+    fi
+
+    printf 'Sube el nuevo install.sh a la VPS y escribe aquí su ruta local.\n'
+    read -r -e -p 'Ruta del nuevo install.sh: ' update_file || return
+    if [[ ! -f "$update_file" || ! -r "$update_file" || "$update_file" -ef "$target" ]]; then
+        fail "la ruta no contiene un archivo de actualización válido." || true
+        pause
+        return
+    fi
+    if ! bash -n -- "$update_file"; then
+        fail "el archivo tiene errores de sintaxis; no se actualizó." || true
+        pause
+        return
+    fi
+    if ! grep -Fq 'readonly APP_NAME="OXGI - VPN SCRIPT"' "$update_file" ||
+        ! grep -Fq 'readonly SCRIPT_VERSION=' "$update_file" ||
+        ! grep -Fq 'main "$@"' "$update_file"; then
+        fail "el archivo no parece ser un instalador OXGI compatible; no se actualizó." || true
+        pause
+        return
+    fi
+    new_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$update_file" | head -n 1)"
+    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+        fail "no se pudo leer una versión válida del instalador." || true
+        pause
+        return
+    fi
+
+    printf '\nVersión instalada: %s\n' "$SCRIPT_VERSION"
+    printf 'Nueva versión: %s\n' "$new_version"
+    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú: ' confirmation || return
+    if [[ "$confirmation" != "ACTUALIZAR" ]]; then
+        printf 'Actualización cancelada.\n'
+        pause
+        return
+    fi
+
+    temp="$(mktemp "$APP_ROOT/.installer-update.XXXXXX")"
+    install -o root -g root -m 0750 "$update_file" "$temp"
+    backup_temp="$(mktemp "$APP_ROOT/.installer-backup.XXXXXX")"
+    install -o root -g root -m 0750 "$target" "$backup_temp"
+    mv -f -- "$backup_temp" "$APP_ROOT/install.sh.bak"
+    mv -f -- "$temp" "$target"
+    version_temp="$(mktemp "$APP_ROOT/.version.XXXXXX")"
+    printf '%s\n' "$new_version" > "$version_temp"
+    chmod 0644 "$version_temp"
+    mv -f -- "$version_temp" "$APP_ROOT/VERSION"
+
+    printf '\n%sMenú del instalador actualizado a %s.%s\n' "$C_GREEN" "$new_version" "$C_RESET"
+    printf 'La copia anterior quedó en %s/install.sh.bak.\n' "$APP_ROOT"
+    printf 'Los cambios aparecerán la próxima vez que abras oxgi-vpn-installer.\n'
     pause
 }
 
@@ -218,6 +314,7 @@ main() {
         case "$choice" in
             1) install_current_version ;;
             2) show_version_menu ;;
+            3) update_installer_menu ;;
             0) printf 'Hasta luego.\n'; return 0 ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
