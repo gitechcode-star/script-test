@@ -7,6 +7,7 @@ set -o nounset
 
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
+readonly MENU_COMMAND="/usr/local/bin/menu"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly STATE_DIR="/var/lib/vpn-ssh-admin"
@@ -118,6 +119,13 @@ update_system() {
         pause
         return
     fi
+    if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
+        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+            printf '%s%s ya existe y no pertenece a este script; no se modificó.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
+            pause
+            return
+        fi
+    fi
 
     if ! temp_dir="$(mktemp -d)" || ! stage_dir="$(mktemp -d "$APP_ROOT/.system-update.XXXXXX")"; then
         printf '%sNo pude preparar el espacio temporal para la actualización.%s\n' "$C_RED" "$C_RESET"
@@ -211,6 +219,14 @@ update_system() {
             return
         fi
     done
+    if [[ ! -L "$MENU_COMMAND" ]]; then
+        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
+            printf '%sNo pude crear el comando %s. El menú actualizado sí quedó instalado.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        }
+    fi
     rm -rf -- "$temp_dir" "$stage_dir"
     printf '%sSistema actualizado correctamente. Reiniciando el menú...%s\n' "$C_GREEN" "$C_RESET"
     exec bash "$APP_ROOT/menu.sh"
@@ -237,6 +253,9 @@ uninstall_system() {
     done
     if [[ -L "$LAUNCHER" ]] && [[ "$(readlink -- "$LAUNCHER")" == "$APP_ROOT/menu.sh" ]]; then
         targets+=("$LAUNCHER")
+    fi
+    if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
+        targets+=("$MENU_COMMAND")
     fi
     if [[ -L "$INSTALLER_LAUNCHER" ]] && [[ "$(readlink -- "$INSTALLER_LAUNCHER")" == "$APP_ROOT/install.sh" ]]; then
         targets+=("$INSTALLER_LAUNCHER")
@@ -274,6 +293,7 @@ uninstall_system() {
         case "$path" in
             "$APP_ROOT"|"$CONFIG_DIR"|"$STATE_DIR"|"$LOG_DIR") rm -rf -- "$path" ;;
             "$LAUNCHER") rm -f -- "$path" ;;
+            "$MENU_COMMAND") rm -f -- "$path" ;;
             "$INSTALLER_LAUNCHER") rm -f -- "$path" ;;
             "$SERVICE_UNIT") rm -f -- "$path" ;;
         esac

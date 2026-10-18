@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
+readonly MENU_COMMAND="/usr/local/bin/menu"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/gitechcode-star/script-test/main"
@@ -321,6 +322,14 @@ install_current_version() {
             return
         fi
     fi
+    if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
+        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+            fail "$MENU_COMMAND ya existe y no pertenece a este instalador; no se modificó." || true
+            [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
+            pause
+            return
+        fi
+    fi
     if [[ -e "$INSTALLER_LAUNCHER" || -L "$INSTALLER_LAUNCHER" ]]; then
         if [[ ! -L "$INSTALLER_LAUNCHER" || "$(readlink -- "$INSTALLER_LAUNCHER")" != "$APP_ROOT/install.sh" ]]; then
             fail "$INSTALLER_LAUNCHER ya existe y no pertenece a este instalador; no se modificó." || true
@@ -382,6 +391,9 @@ install_current_version() {
     if [[ ! -L "$LAUNCHER" ]]; then
         ln -s "$APP_ROOT/menu.sh" "$LAUNCHER"
     fi
+    if [[ ! -L "$MENU_COMMAND" ]]; then
+        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND"
+    fi
     if [[ ! -L "$INSTALLER_LAUNCHER" ]]; then
         ln -s "$APP_ROOT/install.sh" "$INSTALLER_LAUNCHER"
     fi
@@ -392,7 +404,7 @@ install_current_version() {
     printf 'Dominio guardado en %s/domain.\n' "$CONFIG_DIR"
     printf 'Certificado SSL: /etc/letsencrypt/live/%s/fullchain.pem\n' "$domain"
     printf 'Clave privada SSL: /etc/letsencrypt/live/%s/privkey.pem\n' "$domain"
-    printf 'Abre el menú con: sudo vpn-ssh-admin\n'
+    printf 'Abre el menú con: sudo menu\n'
     printf 'Abre el instalador con: sudo oxgi-vpn-installer\n'
     printf 'Abriendo el menú principal...\n'
     exec bash "$LAUNCHER"
@@ -487,6 +499,15 @@ update_installer_menu() {
         return
     fi
 
+    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
+        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+            fail "$MENU_COMMAND ya existe y no pertenece a este instalador; no se modifico nada." || true
+            rm -rf -- "$temp_dir"
+            pause
+            return
+        fi
+    fi
+
     printf '\nVersion actual: %s %s\n' "$APP_NAME" "$SCRIPT_VERSION"
     printf 'Version publicada: %s %s\n' "$new_name" "$new_version"
     printf 'Se actualizaran estos archivos:\n  %s\n  %s\n  %s\n' "$target" "$menu_target" "$info_target"
@@ -545,6 +566,14 @@ update_installer_menu() {
     mv -f -- "$installer_temp" "$target"
     mv -f -- "$menu_temp" "$menu_target"
     mv -f -- "$info_temp" "$info_target"
+    if [[ "$menu_target" == "$APP_ROOT/menu.sh" && ! -L "$MENU_COMMAND" ]]; then
+        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
+            fail "Se actualizaron los archivos, pero no pude crear el comando $MENU_COMMAND." || true
+            rm -rf -- "$temp_dir"
+            pause
+            return
+        }
+    fi
     rm -rf -- "$temp_dir"
 
     printf '\n%sMenu completo actualizado (%s %s).%s\n' "$C_GREEN" "$new_name" "$new_version" "$C_RESET"
