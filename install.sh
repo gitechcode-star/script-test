@@ -328,16 +328,20 @@ EOF
 }
 
 ensure_menu_command() {
-    local temp_file
+    local temp_file backup_file force_replace=false
+
+    if [[ "${1:-}" == "force" ]]; then
+        force_replace=true
+    fi
 
     if [[ -L "$MENU_COMMAND" ]]; then
         [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]] && return 0
-        fail "$MENU_COMMAND ya existe y no pertenece a este instalador." || true
-        return 1
     fi
     if [[ -e "$MENU_COMMAND" ]] && { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
-        fail "$MENU_COMMAND ya existe y no pertenece a este instalador." || true
-        return 1
+        if [[ "$force_replace" != true ]]; then
+            fail "$MENU_COMMAND ya existe y no pertenece a este instalador." || true
+            return 1
+        fi
     fi
 
     temp_file="$(mktemp /usr/local/bin/.menu.XXXXXX)" || return 1
@@ -364,7 +368,31 @@ EOF
         rm -f -- "$temp_file"
         return 1
     fi
-    chmod 0755 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$MENU_COMMAND"
+    if ! chmod 0755 "$temp_file" || ! chown root:root "$temp_file"; then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+
+    if [[ "$force_replace" == true && ( -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ) ]] &&
+        { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
+        backup_file="${MENU_COMMAND}.oxgi-backup.$(date +%Y%m%d%H%M%S)"
+        local suffix=0
+        while [[ -e "$backup_file" || -L "$backup_file" ]]; do
+            ((suffix += 1))
+            backup_file="${MENU_COMMAND}.oxgi-backup.$(date +%Y%m%d%H%M%S).${suffix}"
+        done
+        if ! mv -- "$MENU_COMMAND" "$backup_file"; then
+            rm -f -- "$temp_file"
+            return 1
+        fi
+        printf 'Se guardo el elemento anterior como: %s\n' "$backup_file"
+    fi
+
+    if ! mv -f -- "$temp_file" "$MENU_COMMAND"; then
+        [[ -n "${backup_file:-}" && ( -e "$backup_file" || -L "$backup_file" ) ]] && mv -- "$backup_file" "$MENU_COMMAND"
+        rm -f -- "$temp_file"
+        return 1
+    fi
 }
 install_current_version() {
     local domain source_menu source_installer source_info source_dir temp_source_dir menu_temp installer_temp info_temp domain_temp confirmation package_version
@@ -525,7 +553,7 @@ install_current_version() {
 
 update_installer_menu() {
     local temp_dir new_installer new_menu new_info target menu_target info_target
-    local new_version new_name confirmation target_dir menu_target_dir info_target_dir
+    local new_version new_name target_dir menu_target_dir info_target_dir
     local installer_temp menu_temp info_temp backup_temp menu_backup_temp info_backup_temp
     local package_file normalized_file
     temp_dir="$(mktemp -d)"
@@ -612,19 +640,6 @@ update_installer_menu() {
         return
     fi
 
-    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
-            :
-        elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
-            :
-        else
-            fail "$MENU_COMMAND ya existe y no pertenece a este instalador; no se modifico nada." || true
-            rm -rf -- "$temp_dir"
-            pause
-            return
-        fi
-    fi
-
     printf '\nVersion actual: %s %s\n' "$APP_NAME" "$SCRIPT_VERSION"
     printf 'Version publicada: %s %s\n' "$new_name" "$new_version"
     printf 'Se actualizaran estos archivos:\n  %s\n  %s\n  %s\n' "$target" "$menu_target" "$info_target"
@@ -633,17 +648,6 @@ update_installer_menu() {
         cmp -s -- "$new_menu" "$menu_target" &&
         cmp -s -- "$new_info" "$info_target"; then
         printf '\nEl paquete ya esta actualizado.\n'
-        rm -rf -- "$temp_dir"
-        pause
-        return
-    fi
-
-    read -r -p 'Escribe ACTUALIZAR para reemplazar el menu completo: ' confirmation </dev/tty || {
-        rm -rf -- "$temp_dir"
-        return
-    }
-    if [[ "$confirmation" != "ACTUALIZAR" ]]; then
-        printf 'Actualizacion cancelada.\n'
         rm -rf -- "$temp_dir"
         pause
         return
@@ -683,7 +687,7 @@ update_installer_menu() {
     mv -f -- "$installer_temp" "$target"
     mv -f -- "$menu_temp" "$menu_target"
     mv -f -- "$info_temp" "$info_target"
-    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! ensure_menu_command; then
+    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! ensure_menu_command force; then
         printf '%sEl menú fue actualizado, pero no pude registrar el comando %s.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
     fi
     if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! install_menu_function; then
@@ -726,7 +730,7 @@ main() {
         return 1
     fi
 
-    if ! ensure_menu_command; then
+    if ! ensure_menu_command force; then
         printf '%sNo pude registrar el comando menu. Corrige el conflicto indicado y vuelve a ejecutar el instalador.%s\n' "$C_RED" "$C_RESET"
         return 1
     fi
