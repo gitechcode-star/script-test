@@ -2,8 +2,6 @@
 
 set -Eeuo pipefail
 
-readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.7"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
@@ -28,6 +26,39 @@ else
     # When run as `curl ... | bash`, Bash has no script filename to resolve.
     readonly SCRIPT_DIR=""
 fi
+
+load_script_info() {
+    local info_file temp_info
+    temp_info=""
+    if [[ -n "$SCRIPT_DIR" && -r "$SCRIPT_DIR/script-info.sh" ]]; then
+        info_file="$SCRIPT_DIR/script-info.sh"
+    elif [[ -r "$PWD/script-info.sh" ]]; then
+        info_file="$PWD/script-info.sh"
+    else
+        temp_info="$(mktemp)"
+        if ! curl -fsSL "$REPO_RAW_URL/script-info.sh" -o "$temp_info"; then
+            rm -f -- "$temp_info"
+            printf 'Error: no pude cargar script-info.sh desde el paquete ni desde el repositorio.\n' >&2
+            exit 1
+        fi
+        info_file="$temp_info"
+    fi
+
+    # shellcheck disable=SC1090
+    if ! source "$info_file"; then
+        [[ -n "$temp_info" ]] && rm -f -- "$temp_info"
+        printf 'Error: script-info.sh no es válido.\n' >&2
+        exit 1
+    fi
+    [[ -n "$temp_info" ]] && rm -f -- "$temp_info"
+    if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+        printf 'Error: script-info.sh debe definir APP_NAME y una SCRIPT_VERSION válida.\n' >&2
+        exit 1
+    fi
+}
+
+load_script_info
+readonly APP_NAME SCRIPT_VERSION
 
 if [[ -t 1 ]]; then
     readonly C_RESET=$'\033[0m'
@@ -141,7 +172,7 @@ check_managed_dir() {
 }
 
 install_current_version() {
-    local domain source_menu source_installer source_dir temp_source_dir menu_temp installer_temp version_temp domain_temp confirmation package_version
+    local domain source_menu source_installer source_info source_dir temp_source_dir menu_temp installer_temp info_temp domain_temp confirmation package_version
     temp_source_dir=""
 
     if ! domain="$(prompt_domain)"; then
@@ -161,16 +192,17 @@ install_current_version() {
 
     source_dir="$SCRIPT_DIR"
     [[ -n "$source_dir" ]] || source_dir="$PWD"
-    if [[ -z "$source_dir" || ! -f "$source_dir/menu.sh" || ! -f "$source_dir/install.sh" ]]; then
+    if [[ -z "$source_dir" || ! -f "$source_dir/menu.sh" || ! -f "$source_dir/install.sh" || ! -f "$source_dir/script-info.sh" ]]; then
         temp_source_dir="$(mktemp -d)"
         if ! curl -fsSL "$REPO_RAW_URL/menu.sh" -o "$temp_source_dir/menu.sh" ||
-            ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$temp_source_dir/install.sh"; then
-            fail "no pude descargar menu.sh e install.sh desde el repositorio." || true
+            ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$temp_source_dir/install.sh" ||
+            ! curl -fsSL "$REPO_RAW_URL/script-info.sh" -o "$temp_source_dir/script-info.sh"; then
+            fail "no pude descargar el paquete completo desde el repositorio." || true
             rm -rf -- "$temp_source_dir"
             pause
             return
         fi
-        package_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$temp_source_dir/install.sh" | head -n 1)"
+        package_version="$(sed -n 's/^SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$temp_source_dir/script-info.sh" | head -n 1)"
         if [[ "$package_version" != "$SCRIPT_VERSION" ]]; then
             fail "la versión descargada ($package_version) no coincide con el instalador ejecutado ($SCRIPT_VERSION). Vuelve a descargar install.sh e inténtalo otra vez." || true
             rm -rf -- "$temp_source_dir"
@@ -181,8 +213,9 @@ install_current_version() {
     fi
     source_menu="$source_dir/menu.sh"
     source_installer="$source_dir/install.sh"
-    if [[ ! -f "$source_menu" || ! -r "$source_menu" || ! -f "$source_installer" || ! -r "$source_installer" ]]; then
-        fail "se requieren install.sh y menu.sh en la misma carpeta o en el repositorio configurado." || true
+    source_info="$source_dir/script-info.sh"
+    if [[ ! -f "$source_menu" || ! -r "$source_menu" || ! -f "$source_installer" || ! -r "$source_installer" || ! -f "$source_info" || ! -r "$source_info" ]]; then
+        fail "se requieren install.sh, menu.sh y script-info.sh en la misma carpeta o en el repositorio configurado." || true
         [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
         pause
         return
@@ -226,14 +259,17 @@ install_current_version() {
     install -o root -g root -m 0750 "$source_menu" "$menu_temp"
     mv -f -- "$menu_temp" "$APP_ROOT/menu.sh"
 
+    info_temp="$(mktemp "$APP_ROOT/.script-info.XXXXXX")"
+    install -o root -g root -m 0640 "$source_info" "$info_temp"
+    mv -f -- "$info_temp" "$APP_ROOT/script-info.sh"
+
     installer_temp="$(mktemp "$APP_ROOT/.installer.XXXXXX")"
     install -o root -g root -m 0750 "$source_installer" "$installer_temp"
     mv -f -- "$installer_temp" "$APP_ROOT/install.sh"
 
-    version_temp="$(mktemp "$APP_ROOT/.version.XXXXXX")"
-    printf '%s\n' "$SCRIPT_VERSION" > "$version_temp"
-    chmod 0644 "$version_temp"
-    mv -f -- "$version_temp" "$APP_ROOT/VERSION"
+    if [[ -f "$APP_ROOT/VERSION" && ! -L "$APP_ROOT/VERSION" ]]; then
+        rm -f -- "$APP_ROOT/VERSION"
+    fi
 
     if [[ ! -e "$CONFIG_DIR" ]]; then
         install -d -o root -g root -m 0750 "$CONFIG_DIR"
@@ -262,13 +298,16 @@ install_current_version() {
 }
 
 update_installer_menu() {
-    local temp_dir new_installer new_menu target menu_target new_version menu_version confirmation
-    local target_dir menu_target_dir installer_temp menu_temp backup_temp menu_backup_temp version_temp
+    local temp_dir new_installer new_menu new_info target menu_target info_target
+    local new_version new_name confirmation target_dir menu_target_dir info_target_dir
+    local installer_temp menu_temp info_temp backup_temp menu_backup_temp info_backup_temp
     temp_dir="$(mktemp -d)"
     new_installer="$temp_dir/install.sh"
     new_menu="$temp_dir/menu.sh"
+    new_info="$temp_dir/script-info.sh"
     target=""
     menu_target=""
+    info_target=""
 
     if (( EUID != 0 )); then
         fail "se requieren permisos de root para actualizar el instalador." || true
@@ -277,72 +316,82 @@ update_installer_menu() {
         return
     fi
 
-    printf 'Descargando el menú de instalación y los archivos actualizados...\n'
+    printf 'Descargando el paquete actualizado...\n'
     if ! curl -fsSL "$REPO_RAW_URL/install.sh" -o "$new_installer" ||
-        ! curl -fsSL "$REPO_RAW_URL/menu.sh" -o "$new_menu"; then
-        fail "no pude descargar install.sh y menu.sh del repositorio. Comprueba la conexión y que ambos archivos estén publicados." || true
-        rm -rf -- "$temp_dir"
-        pause
-        return
-    fi
-    if ! bash -n -- "$new_installer" ||
-        ! grep -Fq 'readonly APP_NAME="OXGI - VPN SCRIPT"' "$new_installer" ||
-        ! grep -Fq 'readonly SCRIPT_VERSION=' "$new_installer" ||
-        ! grep -Fq 'main "$@"' "$new_installer" ||
-        ! bash -n -- "$new_menu" ||
-        ! grep -Fq 'readonly VERSION=' "$new_menu" ||
-        ! grep -Fq 'show_main_menu()' "$new_menu"; then
-        fail "los archivos descargados no parecen ser un paquete OXGI válido; no se modificó nada." || true
-        rm -rf -- "$temp_dir"
-        pause
-        return
-    fi
-    new_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_installer" | head -n 1)"
-    menu_version="$(sed -n 's/^readonly VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_menu" | head -n 1)"
-    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || ! "$menu_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
-        fail "la versión de install.sh o menu.sh no es válida; no se modificó nada." || true
+        ! curl -fsSL "$REPO_RAW_URL/menu.sh" -o "$new_menu" ||
+        ! curl -fsSL "$REPO_RAW_URL/script-info.sh" -o "$new_info"; then
+        fail "No pude descargar install.sh, menu.sh y script-info.sh. Comprueba la conexion y que los tres archivos esten publicados." || true
         rm -rf -- "$temp_dir"
         pause
         return
     fi
 
-    # Prioriza el archivo desde el que se ejecutó el instalador.
+    if ! bash -n -- "$new_installer" ||
+        ! grep -Fq 'main "$@"' "$new_installer" ||
+        ! grep -Fq 'script-info.sh' "$new_installer" ||
+        ! bash -n -- "$new_menu" ||
+        ! grep -Fq 'show_main_menu()' "$new_menu" ||
+        ! grep -Fq 'script-info.sh' "$new_menu" ||
+        ! bash -n -- "$new_info" ||
+        ! grep -Eq '^APP_NAME=".+"$' "$new_info" ||
+        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$new_info"; then
+        fail "Los archivos descargados no forman un paquete OXGI valido; no se modifico nada." || true
+        rm -rf -- "$temp_dir"
+        pause
+        return
+    fi
+
+    new_version="$(sed -n 's/^SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_info" | head -n 1)"
+    new_name="$(sed -n 's/^APP_NAME="\(.*\)"$/\1/p' "$new_info" | head -n 1)"
+    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || -z "$new_name" ]]; then
+        fail "script-info.sh no contiene un nombre o version validos; no se modifico nada." || true
+        rm -rf -- "$temp_dir"
+        pause
+        return
+    fi
+
     if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/install.sh" && ! -L "$SCRIPT_DIR/install.sh" ]]; then
         target="$SCRIPT_DIR/install.sh"
         menu_target="$SCRIPT_DIR/menu.sh"
+        info_target="$SCRIPT_DIR/script-info.sh"
     elif [[ -f "$PWD/install.sh" && ! -L "$PWD/install.sh" ]]; then
         target="$PWD/install.sh"
         menu_target="$PWD/menu.sh"
+        info_target="$PWD/script-info.sh"
     elif check_managed_dir "$APP_ROOT" && [[ -f "$APP_ROOT/install.sh" && ! -L "$APP_ROOT/install.sh" ]]; then
         target="$APP_ROOT/install.sh"
         menu_target="$APP_ROOT/menu.sh"
+        info_target="$APP_ROOT/script-info.sh"
     elif [[ ! -e "$INSTALLER_LAUNCHER" && ! -L "$INSTALLER_LAUNCHER" ]]; then
-        # Si se ejecutó con curl | bash, deja el paquete completo en una ruta persistente.
         target="$INSTALLER_LAUNCHER"
         menu_target="$(dirname -- "$INSTALLER_LAUNCHER")/menu.sh"
+        info_target="$(dirname -- "$INSTALLER_LAUNCHER")/script-info.sh"
     else
-        fail "no encontré una copia segura de install.sh para reemplazar. Descarga el instalador en esta VPS y vuelve a elegir esta opción." || true
+        fail "No encontre una copia segura de install.sh para reemplazar." || true
         rm -rf -- "$temp_dir"
         pause
         return
     fi
-    printf '\nVersión actual del instalador: %s\n' "$SCRIPT_VERSION"
-    printf 'Versión publicada de install.sh: %s\n' "$new_version"
-    printf 'Versión publicada de menu.sh: %s\n' "$menu_version"
-    printf 'Se actualizarán el menú completo y sus archivos en:\n  %s\n  %s\n' "$target" "$menu_target"
-    if [[ -f "$target" && -f "$menu_target" ]] &&
-        cmp -s -- "$new_installer" "$target" && cmp -s -- "$new_menu" "$menu_target"; then
-        printf '\nEl instalador y sus archivos ya están actualizados.\n'
+
+    printf '\nVersion actual: %s %s\n' "$APP_NAME" "$SCRIPT_VERSION"
+    printf 'Version publicada: %s %s\n' "$new_name" "$new_version"
+    printf 'Se actualizaran estos archivos:\n  %s\n  %s\n  %s\n' "$target" "$menu_target" "$info_target"
+    if [[ -f "$target" && -f "$menu_target" && -f "$info_target" ]] &&
+        cmp -s -- "$new_installer" "$target" &&
+        cmp -s -- "$new_menu" "$menu_target" &&
+        cmp -s -- "$new_info" "$info_target"; then
+        printf '\nEl paquete ya esta actualizado.\n'
         rm -rf -- "$temp_dir"
         pause
         return
     fi
-    read -r -p 'Escribe ACTUALIZAR para reemplazar el menú completo: ' confirmation </dev/tty || {
+
+    read -r -p 'Escribe ACTUALIZAR para reemplazar el menu completo: ' confirmation </dev/tty || {
         rm -rf -- "$temp_dir"
         return
     }
     if [[ "$confirmation" != "ACTUALIZAR" ]]; then
-        printf 'Actualización cancelada.\n'
+        printf 'Actualizacion cancelada.\n'
         rm -rf -- "$temp_dir"
         pause
         return
@@ -350,14 +399,18 @@ update_installer_menu() {
 
     target_dir="$(dirname -- "$target")"
     menu_target_dir="$(dirname -- "$menu_target")"
+    info_target_dir="$(dirname -- "$info_target")"
     if [[ "$target" == "$INSTALLER_LAUNCHER" ]]; then
         install -d -o root -g root -m 0755 "$target_dir"
     fi
-    install -d -o root -g root -m 0755 "$menu_target_dir"
+    install -d -o root -g root -m 0755 "$menu_target_dir" "$info_target_dir"
+
     installer_temp="$(mktemp "$target_dir/.install-sh-update.XXXXXX")"
     menu_temp="$(mktemp "$menu_target_dir/.menu-sh-update.XXXXXX")"
+    info_temp="$(mktemp "$info_target_dir/.script-info-update.XXXXXX")"
     install -o root -g root -m 0750 "$new_installer" "$installer_temp"
     install -o root -g root -m 0750 "$new_menu" "$menu_temp"
+    install -o root -g root -m 0640 "$new_info" "$info_temp"
 
     if [[ -f "$target" && ! -L "$target" ]]; then
         backup_temp="$(mktemp "$target_dir/.install-sh-backup.XXXXXX")"
@@ -369,25 +422,28 @@ update_installer_menu() {
         install -o root -g root -m 0750 "$menu_target" "$menu_backup_temp"
         mv -f -- "$menu_backup_temp" "$menu_target.bak"
     fi
+    if [[ -f "$info_target" && ! -L "$info_target" ]]; then
+        info_backup_temp="$(mktemp "$info_target_dir/.script-info-backup.XXXXXX")"
+        install -o root -g root -m 0640 "$info_target" "$info_backup_temp"
+        mv -f -- "$info_backup_temp" "$info_target.bak"
+    fi
+
     mv -f -- "$installer_temp" "$target"
     mv -f -- "$menu_temp" "$menu_target"
-
-    if [[ "$target" == "$APP_ROOT/install.sh" ]]; then
-        version_temp="$(mktemp "$APP_ROOT/.version.XXXXXX")"
-        printf '%s\n' "$new_version" > "$version_temp"
-        chmod 0644 "$version_temp"
-        mv -f -- "$version_temp" "$APP_ROOT/VERSION"
-    fi
+    mv -f -- "$info_temp" "$info_target"
     rm -rf -- "$temp_dir"
 
-    printf '\n%sMenú completo actualizado (install.sh %s, menu.sh %s).%s\n' "$C_GREEN" "$new_version" "$menu_version" "$C_RESET"
-    printf 'Respaldos: %s.bak y %s.bak\n' "$target" "$menu_target"
-    printf 'Reiniciando el instalador con el menú actualizado...\n'
+    printf '\n%sMenu completo actualizado (%s %s).%s\n' "$C_GREEN" "$new_name" "$new_version" "$C_RESET"
+    printf 'Se guardaron copias .bak de los tres archivos.\n'
+    printf 'Reiniciando el instalador actualizado...\n'
     exec bash "$target"
 }
 show_version_menu() {
     local installed_version="No instalado"
-    if [[ -f "$APP_ROOT/VERSION" && ! -L "$APP_ROOT/VERSION" ]]; then
+    if [[ -f "$APP_ROOT/script-info.sh" && ! -L "$APP_ROOT/script-info.sh" ]]; then
+        installed_version="$(sed -n 's/^SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$APP_ROOT/script-info.sh" | head -n 1)"
+        [[ -n "$installed_version" ]] || installed_version="No identificado"
+    elif [[ -f "$APP_ROOT/VERSION" && ! -L "$APP_ROOT/VERSION" ]]; then
         IFS= read -r installed_version < "$APP_ROOT/VERSION" || installed_version="No identificado"
     fi
 

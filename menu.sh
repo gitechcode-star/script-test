@@ -5,8 +5,6 @@
 
 set -o nounset
 
-readonly APP_NAME="Administración VPN/SSH"
-readonly VERSION="0.2.7"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
@@ -16,6 +14,40 @@ readonly LOG_DIR="/var/log/vpn-ssh-admin"
 readonly SERVICE_UNIT="/etc/systemd/system/vpn-ssh-admin.service"
 readonly OWNERSHIP_MARKER=".managed-by-vpn-ssh-admin"
 readonly MARKER_VALUE="Managed by VPN-SSH-Admin"
+
+script_path="${BASH_SOURCE[0]:-}"
+if [[ -n "$script_path" ]]; then
+    while [[ -L "$script_path" ]]; do
+        script_dir="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+        link_target="$(readlink -- "$script_path")"
+        if [[ "$link_target" == /* ]]; then
+            script_path="$link_target"
+        else
+            script_path="$script_dir/$link_target"
+        fi
+    done
+    readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$script_path")" && pwd -P)"
+else
+    readonly SCRIPT_DIR=""
+fi
+
+metadata_file=""
+if [[ -n "$SCRIPT_DIR" && -r "$SCRIPT_DIR/script-info.sh" ]]; then
+    metadata_file="$SCRIPT_DIR/script-info.sh"
+elif [[ -r "$APP_ROOT/script-info.sh" ]]; then
+    metadata_file="$APP_ROOT/script-info.sh"
+fi
+if [[ -z "$metadata_file" ]]; then
+    printf 'Error: no encontré script-info.sh junto al menú ni en %s.\n' "$APP_ROOT" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$metadata_file"
+if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+    printf 'Error: script-info.sh no contiene un nombre y versión válidos.\n' >&2
+    exit 1
+fi
+readonly APP_NAME SCRIPT_VERSION
 
 if [[ -t 1 ]]; then
     readonly C_RESET=$'\033[0m'
@@ -42,7 +74,7 @@ show_header() {
     clear 2>/dev/null || true
     printf '%s%s\n' "$C_CYAN$C_BOLD" "╔══════════════════════════════════════════════╗"
     printf '║ %-44s ║\n' "$APP_NAME"
-    printf '║ %-44s ║\n' "Versión $VERSION"
+    printf '║ %-44s ║\n' "Versión $SCRIPT_VERSION"
     printf '%s\n' "╚══════════════════════════════════════════════╝$C_RESET"
 }
 
