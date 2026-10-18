@@ -8,6 +8,7 @@ set -o nounset
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly MENU_COMMAND="/usr/local/bin/menu"
+readonly MENU_COMMAND_MARKER="# OXGI_MENU_COMMAND_LAUNCHER"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly AUTO_MENU_STATE="/etc/vpn-ssh-admin/auto-menu"
@@ -126,7 +127,11 @@ update_system() {
         return
     fi
     if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+        if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
+            :
+        elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
+            :
+        else
             printf '%s%s ya existe y no pertenece a este script; no se modificó.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
             pause
             return
@@ -225,13 +230,11 @@ update_system() {
             return
         fi
     done
-    if [[ ! -L "$MENU_COMMAND" ]]; then
-        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
-            printf '%sNo pude crear el comando %s. El menú actualizado sí quedó instalado.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
-            rm -rf -- "$temp_dir" "$stage_dir"
-            pause
-            return
-        }
+    if ! ensure_menu_command; then
+        printf '%sNo pude configurar el comando %s, aunque el menú se actualizó.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
+        rm -rf -- "$temp_dir" "$stage_dir"
+        pause
+        return
     fi
     if ! install_menu_function; then
         printf '%sEl menú se actualizó y el comando menu funciona, pero no pude registrar la función en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
@@ -319,6 +322,43 @@ EOF
     chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
 }
 
+ensure_menu_command() {
+    local temp_file
+
+    if [[ -L "$MENU_COMMAND" ]]; then
+        [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]] && return 0
+        printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
+        return 1
+    fi
+    if [[ -e "$MENU_COMMAND" ]] && { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
+        printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
+        return 1
+    fi
+    temp_file="$(mktemp /usr/local/bin/.menu.XXXXXX)" || return 1
+    if ! cat > "$temp_file" <<'EOF'
+#!/usr/bin/env bash
+# OXGI_MENU_COMMAND_LAUNCHER
+if [[ -x /opt/vpn-ssh-admin/menu.sh ]]; then
+    exec bash /opt/vpn-ssh-admin/menu.sh "$@"
+fi
+installer_file="$(mktemp)" || exit 1
+if ! curl -fsSL "https://raw.githubusercontent.com/gitechcode-star/script-test/main/install.sh" -o "$installer_file"; then
+    rm -f -- "$installer_file"
+    printf 'Error: no pude descargar el menú de instalación. Comprueba la conexión.\n' >&2
+    exit 1
+fi
+bash "$installer_file" "$@"
+status=$?
+rm -f -- "$installer_file"
+exit "$status"
+EOF
+    then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod 0755 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$MENU_COMMAND"
+}
+
 toggle_auto_menu() {
     local temp_file
 
@@ -348,18 +388,9 @@ toggle_auto_menu() {
         return
     fi
 
-    if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
-            printf '%sNo puedo configurar el acceso: %s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
-            pause
-            return
-        fi
-    else
-        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
-            printf '%sNo pude crear el comando %s.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
-            pause
-            return
-        }
+    if ! ensure_menu_command; then
+        pause
+        return
     fi
     if ! install_menu_function; then
         printf '%sLa función menu no quedó registrada en %s.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
@@ -462,6 +493,8 @@ uninstall_system() {
         targets+=("$LAUNCHER")
     fi
     if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
+        targets+=("$MENU_COMMAND")
+    elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
         targets+=("$MENU_COMMAND")
     fi
     if [[ -L "$INSTALLER_LAUNCHER" ]] && [[ "$(readlink -- "$INSTALLER_LAUNCHER")" == "$APP_ROOT/install.sh" ]]; then

@@ -5,6 +5,7 @@ set -Eeuo pipefail
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly MENU_COMMAND="/usr/local/bin/menu"
+readonly MENU_COMMAND_MARKER="# OXGI_MENU_COMMAND_LAUNCHER"
 readonly ROOT_BASHRC="/root/.bashrc"
 readonly MENU_FUNCTION_BEGIN="# OXGI_MENU_FUNCTION_BEGIN"
 readonly MENU_FUNCTION_END="# OXGI_MENU_FUNCTION_END"
@@ -313,6 +314,45 @@ EOF
     chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
 }
 
+ensure_menu_command() {
+    local temp_file
+
+    if [[ -L "$MENU_COMMAND" ]]; then
+        [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]] && return 0
+        fail "$MENU_COMMAND ya existe y no pertenece a este instalador." || true
+        return 1
+    fi
+    if [[ -e "$MENU_COMMAND" ]] && { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
+        fail "$MENU_COMMAND ya existe y no pertenece a este instalador." || true
+        return 1
+    fi
+
+    temp_file="$(mktemp /usr/local/bin/.menu.XXXXXX)" || return 1
+    if ! cat > "$temp_file" <<'EOF'
+#!/usr/bin/env bash
+# OXGI_MENU_COMMAND_LAUNCHER
+if [[ -x /opt/vpn-ssh-admin/menu.sh ]]; then
+    exec bash /opt/vpn-ssh-admin/menu.sh "$@"
+fi
+
+installer_url="https://raw.githubusercontent.com/gitechcode-star/script-test/main/install.sh"
+installer_file="$(mktemp)" || exit 1
+if ! curl -fsSL "$installer_url" -o "$installer_file"; then
+    rm -f -- "$installer_file"
+    printf 'Error: no pude descargar el menú de instalación. Comprueba la conexión.\n' >&2
+    exit 1
+fi
+bash "$installer_file" "$@"
+status=$?
+rm -f -- "$installer_file"
+exit "$status"
+EOF
+    then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod 0755 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$MENU_COMMAND"
+}
 install_current_version() {
     local domain source_menu source_installer source_info source_dir temp_source_dir menu_temp installer_temp info_temp domain_temp confirmation package_version
     temp_source_dir=""
@@ -378,7 +418,11 @@ install_current_version() {
         fi
     fi
     if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+        if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
+            :
+        elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
+            :
+        else
             fail "$MENU_COMMAND ya existe y no pertenece a este instalador; no se modificó." || true
             [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
             pause
@@ -446,9 +490,7 @@ install_current_version() {
     if [[ ! -L "$LAUNCHER" ]]; then
         ln -s "$APP_ROOT/menu.sh" "$LAUNCHER"
     fi
-    if [[ ! -L "$MENU_COMMAND" ]]; then
-        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND"
-    fi
+    ensure_menu_command || printf '%sEl menú quedó instalado, pero no pude configurar el comando %s.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
     if [[ ! -L "$INSTALLER_LAUNCHER" ]]; then
         ln -s "$APP_ROOT/install.sh" "$INSTALLER_LAUNCHER"
     fi
@@ -558,7 +600,11 @@ update_installer_menu() {
     fi
 
     if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+        if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
+            :
+        elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
+            :
+        else
             fail "$MENU_COMMAND ya existe y no pertenece a este instalador; no se modifico nada." || true
             rm -rf -- "$temp_dir"
             pause
@@ -624,13 +670,8 @@ update_installer_menu() {
     mv -f -- "$installer_temp" "$target"
     mv -f -- "$menu_temp" "$menu_target"
     mv -f -- "$info_temp" "$info_target"
-    if [[ "$menu_target" == "$APP_ROOT/menu.sh" && ! -L "$MENU_COMMAND" ]]; then
-        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
-            fail "Se actualizaron los archivos, pero no pude crear el comando $MENU_COMMAND." || true
-            rm -rf -- "$temp_dir"
-            pause
-            return
-        }
+    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! ensure_menu_command; then
+        printf '%sEl menú fue actualizado, pero no pude registrar el comando %s.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
     fi
     if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! install_menu_function; then
         printf '%sAdvertencia: el menú fue actualizado, pero no pude registrar la función menu en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
@@ -670,6 +711,14 @@ show_version_menu() {
 main() {
     if ! check_system; then
         return 1
+    fi
+
+    if ! ensure_menu_command; then
+        printf '%sNo pude registrar el comando menu. Corrige el conflicto indicado y vuelve a ejecutar el instalador.%s\n' "$C_RED" "$C_RESET"
+        return 1
+    fi
+    if ! install_menu_function; then
+        printf '%sAdvertencia: el comando menu funcionará, pero no pude registrarlo en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
     fi
 
     local choice
