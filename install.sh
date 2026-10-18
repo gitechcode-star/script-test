@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.2"
+readonly SCRIPT_VERSION="0.2.3"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
