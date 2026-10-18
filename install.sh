@@ -176,7 +176,20 @@ verify_domain_dns() {
         return 1
     fi
 
-    resolved_ipv6="$(getent ahostsv6 "$domain" | awk '{print tolower($1)}' | sort -u)"
+    # glibc may return IPv4 addresses as IPv4-mapped IPv6 (::ffff:a.b.c.d)
+    # from ahostsv6. Those are not AAAA records and must not trigger IPv6 checks.
+    resolved_ipv6="$(getent ahostsv6 "$domain" | awk '{print tolower($1)}' | python3 -c '
+import ipaddress
+import sys
+
+for value in sys.stdin:
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError:
+        continue
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is None:
+        print(address.compressed)
+' | sort -u)"
     if [[ -n "$resolved_ipv6" ]]; then
         public_ipv6="$(curl -6fsS --max-time 10 https://api64.ipify.org 2>/dev/null || true)"
         if [[ -z "$public_ipv6" ]] || ! python3 - "$public_ipv6" "$resolved_ipv6" <<'PY'
