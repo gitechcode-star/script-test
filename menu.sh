@@ -6,7 +6,7 @@
 set -o nounset
 
 readonly APP_NAME="Administración VPN/SSH"
-readonly VERSION="0.2.5"
+readonly VERSION="0.2.6"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"

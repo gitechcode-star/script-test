@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.5"
+readonly SCRIPT_VERSION="0.2.6"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
@@ -80,17 +80,28 @@ check_system() {
     fi
 }
 
-show_header() {
-    clear 2>/dev/null || true
-    printf '%s%s%s\n' "$C_GREEN$C_BOLD" ' _____  \     /   ____   _____                          \     /  _____  |\    |          _____   _____   _____   _____   _____  _______' "$C_RESET"
-    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '/     \  \   /   / ___|    |                             \   /  |  _  \ | \   |         / ____| / ____| |  __ \    |    |  _  \    |   ' "$C_RESET"
-    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '|     |   \ /   | |  _     |            -------           \ /   | |_| | |  \  |         \___ \  | |     | |__) |    |    | |_| |    |   ' "$C_RESET"
-    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '|     |   / \   | |_| |    |                               V    |  __/  |   \ |          ___) | | |___  |  _  /    |    |  __/     |   ' "$C_RESET"
-    printf '%s%s%s\n' "$C_RED$C_BOLD" ' \_____/  /   \   \____|  _____                             |    |_|     |    \|         |____/   \____| |_| \_\  _____  |_|        |   ' "$C_RESET"
-    printf '%s%64s%s\n\n' "$C_YELLOW$C_BOLD" 'V2' "$C_RESET"
-    printf '%sDESARROLLADO POR OXG%s    Versión %s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$SCRIPT_VERSION"
+print_banner_line() {
+    local color="$1" text="$2" columns width padding
+    columns="$(tput cols 2>/dev/null || true)"
+    [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
+    width="${#text}"
+    (( columns > width )) || columns="$width"
+    padding=$(((columns - width) / 2))
+    printf '%*s%s%s%s\n' "$padding" '' "$color" "$text" "$C_RESET"
 }
 
+show_header() {
+    clear 2>/dev/null || true
+    print_banner_line "$C_GREEN$C_BOLD" ' _____  \     /   ____   _____                          \     /  _____  |\    |          _____   _____   _____   _____   _____  _______'
+    print_banner_line "$C_WHITE$C_BOLD" '/     \  \   /   / ___|    |                             \   /  |  _  \ | \   |         / ____| / ____| |  __ \    |    |  _  \    |   '
+    print_banner_line "$C_WHITE$C_BOLD" '|     |   \ /   | |  _     |            -------           \ /   | |_| | |  \  |         \___ \  | |     | |__) |    |    | |_| |    |   '
+    print_banner_line "$C_WHITE$C_BOLD" '|     |   / \   | |_| |    |                               V    |  __/  |   \ |          ___) | | |___  |  _  /    |    |  __/     |   '
+    print_banner_line "$C_RED$C_BOLD" ' \_____/  /   \   \____|  _____                             |    |_|     |    \|         |____/   \____| |_| \_\  _____  |_|        |   '
+    print_banner_line "$C_YELLOW$C_BOLD" 'V2'
+    printf '\n'
+    print_banner_line "$C_RED$C_BOLD" "DESARROLLADO POR OXG    Versión $SCRIPT_VERSION"
+    printf '\n'
+}
 show_main_menu() {
     show_header
     printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW" "$C_RESET"
