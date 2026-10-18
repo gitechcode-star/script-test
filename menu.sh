@@ -56,19 +56,27 @@ if [[ -z "$metadata_file" ]]; then
 fi
 # shellcheck disable=SC1090
 source "$metadata_file"
-if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || -z "${OXGI_LOGO:-}" ||
+    -z "${OXGI_COLOR_RESET:-}" || -z "${OXGI_COLOR_BOLD:-}" || -z "${OXGI_COLOR_LINE:-}" ||
+    -z "${OXGI_COLOR_BRAND_BG:-}" || -z "${OXGI_COLOR_BRAND_FG:-}" || -z "${OXGI_COLOR_GREEN:-}" ||
+    -z "${OXGI_COLOR_RED:-}" || -z "${OXGI_COLOR_YELLOW:-}" || -z "${OXGI_COLOR_CYAN:-}" ||
+    -z "${OXGI_COLOR_BLUE:-}" || -z "${OXGI_COLOR_WHITE:-}" ||
+    [[ -z "${OXGI_LOGO_LINE_1:-}" || -z "${OXGI_LOGO_LINE_2:-}" || -z "${OXGI_LOGO_LINE_3:-}" ||
+        -z "${OXGI_LOGO_LINE_4:-}" || -z "${OXGI_LOGO_LINE_5:-}" ]] ||
+    ! declare -F oxgi_print_logo >/dev/null; then
     printf 'Error: script-info.sh no contiene un nombre y versión válidos.\n' >&2
     exit 1
 fi
 readonly APP_NAME SCRIPT_VERSION
 
 if [[ -t 1 ]]; then
-    readonly C_RESET=$'\033[0m'
-    readonly C_BOLD=$'\033[1m'
-    readonly C_CYAN=$'\033[36m'
-    readonly C_GREEN=$'\033[32m'
-    readonly C_YELLOW=$'\033[33m'
-    readonly C_RED=$'\033[31m'
+    readonly C_RESET="$OXGI_COLOR_RESET"
+    readonly C_BOLD="$OXGI_COLOR_BOLD"
+    readonly C_CYAN="$OXGI_COLOR_CYAN"
+    readonly C_GREEN="$OXGI_COLOR_GREEN"
+    readonly C_YELLOW="$OXGI_COLOR_YELLOW"
+    readonly C_RED="$OXGI_COLOR_RED"
+    readonly C_BLUE="$OXGI_COLOR_BLUE"
 else
     readonly C_RESET=""
     readonly C_BOLD=""
@@ -76,6 +84,7 @@ else
     readonly C_GREEN=""
     readonly C_YELLOW=""
     readonly C_RED=""
+    readonly C_BLUE=""
 fi
 
 pause() {
@@ -85,12 +94,15 @@ pause() {
 
 show_header() {
     clear 2>/dev/null || true
-    printf '%s%s\n' "$C_CYAN$C_BOLD" "╔══════════════════════════════════════════════╗"
-    printf '║ %-44s ║\n' "$APP_NAME"
-    printf '║ %-44s ║\n' "Versión $SCRIPT_VERSION"
-    printf '%s\n' "╚══════════════════════════════════════════════╝$C_RESET"
+    oxgi_print_logo
+    printf '  %sVersión %s%s\n\n' "$C_CYAN$C_BOLD" "$SCRIPT_VERSION" "$C_RESET"
 }
 
+menu_item() {
+    local number="$1" label="$2" spacing="${3:-}"
+    printf '  %s[%02d]%s  %s%s%s\n' "$C_RED$C_BOLD" "$number" "$C_RESET" "$C_YELLOW$C_BOLD" "$label" "$C_RESET"
+    [[ "$spacing" == "blank" ]] && printf '\n'
+}
 not_ready() {
     printf '%sEsta opción todavía no está implementada.%s\n' "$C_YELLOW" "$C_RESET"
     pause
@@ -115,7 +127,92 @@ open_installer_menu() {
     fi
 }
 
-update_system() {
+update_admin_menu() {
+    local temp_dir stage_dir file version
+    local -a files=(menu.sh script-info.sh)
+
+    if (( EUID != 0 )); then
+        printf '%sEjecuta el menú como root para actualizar sus archivos.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ ! -f "$APP_ROOT/$OWNERSHIP_MARKER" ]] || ! grep -Fxq "$MARKER_VALUE" "$APP_ROOT/$OWNERSHIP_MARKER"; then
+        printf '%sNo pude confirmar que %s pertenezca a esta instalación.%s\n' "$C_RED" "$APP_ROOT" "$C_RESET"
+        pause
+        return
+    fi
+    if ! temp_dir="$(mktemp -d)" || ! stage_dir="$(mktemp -d "$APP_ROOT/.admin-menu-update.XXXXXX")"; then
+        printf '%sNo pude preparar el espacio temporal para la actualización.%s\n' "$C_RED" "$C_RESET"
+        [[ -n "${temp_dir:-}" ]] && rm -rf -- "$temp_dir"
+        pause
+        return
+    fi
+
+    printf 'Descargando el menú de administración actualizado...\n'
+    for file in "${files[@]}"; do
+        if ! curl -fsSL "$REPO_RAW_URL/$file" -o "$temp_dir/$file" ||
+            ! tr -d '\r' < "$temp_dir/$file" > "$temp_dir/$file.lf"; then
+            printf '%sNo pude descargar o preparar %s; no se actualizó el menú.%s\n' "$C_RED" "$file" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+        mv -f -- "$temp_dir/$file.lf" "$temp_dir/$file"
+    done
+
+    if ! bash -n -- "$temp_dir/menu.sh" ||
+        ! grep -Fq 'show_main_menu()' "$temp_dir/menu.sh" ||
+        ! bash -n -- "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^APP_NAME=".+"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^OXGI_LOGO=".+"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^OXGI_LOGO_LINE_[1-5]=' "$temp_dir/script-info.sh" ||
+        ! grep -Fq 'oxgi_print_logo() {' "$temp_dir/script-info.sh"; then
+        printf '%sLos archivos descargados no son válidos; no se modificó el menú.%s\n' "$C_RED" "$C_RESET"
+        rm -rf -- "$temp_dir" "$stage_dir"
+        pause
+        return
+    fi
+
+    version="$(sed -n 's/^SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$temp_dir/script-info.sh" | head -n 1)"
+    for file in "${files[@]}"; do
+        if [[ -f "$APP_ROOT/$file" && ! -L "$APP_ROOT/$file" ]] && ! cp -p -- "$APP_ROOT/$file" "$APP_ROOT/$file.bak"; then
+            printf '%sNo pude guardar la copia de %s; se canceló la actualización.%s\n' "$C_RED" "$file" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+        local file_mode=0750
+        [[ "$file" == "script-info.sh" ]] && file_mode=0640
+        if ! install -o root -g root -m "$file_mode" "$temp_dir/$file" "$stage_dir/$file"; then
+            printf '%sNo pude preparar %s; no se modificó el menú.%s\n' "$C_RED" "$file" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+    done
+    for file in "${files[@]}"; do
+        if ! mv -f -- "$stage_dir/$file" "$APP_ROOT/$file"; then
+            printf '%sFalló el reemplazo de %s; revisa las copias .bak.%s\n' "$C_RED" "$file" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+    done
+    if ! ensure_menu_command force; then
+        printf '%sEl menú se actualizó, pero no pude configurar el comando menu.%s\n' "$C_RED" "$C_RESET"
+        rm -rf -- "$temp_dir" "$stage_dir"
+        pause
+        return
+    fi
+    install_menu_function || true
+    rm -rf -- "$temp_dir" "$stage_dir"
+    printf '\n%sMenú de administración actualizado a la versión %s.%s\n' "$C_GREEN" "${version:-desconocida}" "$C_RESET"
+    printf 'Reiniciando el menú actualizado...\n'
+    exec bash "$APP_ROOT/menu.sh"
+}
+
+update_installed_system() {
     local temp_dir stage_dir file version package
     local -a packages=()
     local -a files=(menu.sh install.sh script-info.sh dependencies.txt)
@@ -154,7 +251,10 @@ update_system() {
         ! grep -Fq 'main "$@"' "$temp_dir/install.sh" ||
         ! bash -n -- "$temp_dir/script-info.sh" ||
         ! grep -Eq '^APP_NAME=".+"$' "$temp_dir/script-info.sh" ||
-        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$temp_dir/script-info.sh"; then
+        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^OXGI_LOGO=".+"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^OXGI_LOGO_LINE_[1-5]=' "$temp_dir/script-info.sh" ||
+        ! grep -Fq 'oxgi_print_logo() {' "$temp_dir/script-info.sh"; then
         printf '%sEl paquete descargado no es válido; no se modificaron los archivos.%s\n' "$C_RED" "$C_RESET"
         rm -rf -- "$temp_dir" "$stage_dir"
         pause
@@ -353,16 +453,13 @@ ensure_menu_command() {
 if [[ -x /opt/vpn-ssh-admin/menu.sh ]]; then
     exec bash /opt/vpn-ssh-admin/menu.sh "$@"
 fi
-installer_file="$(mktemp)" || exit 1
-if ! curl -fsSL "https://raw.githubusercontent.com/gitechcode-star/script-test/main/install.sh" -o "$installer_file"; then
-    rm -f -- "$installer_file"
-    printf 'Error: no pude descargar el menú de instalación. Comprueba la conexión.\n' >&2
-    exit 1
-fi
-bash "$installer_file" "$@"
-status=$?
-rm -f -- "$installer_file"
-exit "$status"
+for installer_path in /usr/local/sbin/oxgi-vpn-installer /opt/vpn-ssh-admin/install.sh; do
+    if [[ -r "$installer_path" ]]; then
+        exec bash "$installer_path" "$@"
+    fi
+done
+printf 'Error: no se encontro el instalador en las rutas locales de OXGI.\n' >&2
+exit 1
 EOF
     then
         rm -f -- "$temp_file"
@@ -736,8 +833,15 @@ parse_ssh_duration() {
     unit="${BASH_REMATCH[2]}"
     case "$unit" in
         h) result=$((base_epoch + amount * 3600)) ;;
-        d) result="$(date -d "@$base_epoch +$amount days" +%s 2>/dev/null)" || return 1 ;;
-        m) result="$(date -d "@$base_epoch +$amount months" +%s 2>/dev/null)" || return 1 ;;
+        d|m)
+            local base_date
+            base_date="$(date -d "@$base_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" || return 1
+            if [[ "$unit" == "d" ]]; then
+                result="$(date -d "$base_date +$amount days" +%s 2>/dev/null)" || return 1
+            else
+                result="$(date -d "$base_date +$amount months" +%s 2>/dev/null)" || return 1
+            fi
+            ;;
     esac
     [[ "$result" =~ ^[0-9]+$ ]] || return 1
     printf '%s\n' "$result"
@@ -750,7 +854,9 @@ save_ssh_user_data() {
     chmod 0600 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$SSH_USERS_DIR/$username.meta" || return 1
     # chage accepts dates only; lock at the start of the day after expiry so an
     # account is never disabled before its exact metadata expiration time.
-    expiry_lock_date="$(date -d "@$expiry +1 day" +%F)" || return 1
+    local expiry_date
+    expiry_date="$(date -d "@$expiry" +%F)" || return 1
+    expiry_lock_date="$(date -d "$expiry_date +1 day" +%F)" || return 1
     chage -E "$expiry_lock_date" "$username"
 }
 
@@ -1124,18 +1230,18 @@ show_ssh_users_menu() {
     while true; do
         show_header
         printf '%sAdministrar usuarios SSH%s\n\n' "$C_BOLD" "$C_RESET"
-        printf '  1) Crear usuario\n'
-        printf '  2) Renovar usuario\n'
-        printf '  3) Listar usuarios\n'
-        printf '  4) Eliminar usuario\n'
-        printf '  5) Usuarios en línea\n'
+        menu_item 1 'Crear usuario'
+        menu_item 2 'Renovar usuario'
+        menu_item 3 'Listar usuarios'
+        menu_item 4 'Eliminar usuario'
+        menu_item 5 'Usuarios en línea'
         if systemctl is-enabled --quiet oxgi-ssh-autokill.timer 2>/dev/null; then
-            printf '  6) Auto kill: ACTIVADO (desactivar)\n'
+            menu_item 6 'Auto kill: ACTIVADO (desactivar)'
         else
-            printf '  6) Auto kill: DESACTIVADO (activar)\n'
+            menu_item 6 'Auto kill: DESACTIVADO (activar)'
         fi
-        printf '  7) Eliminar todos los usuarios\n'
-        printf '  0) Volver\n\n'
+        menu_item 7 'Eliminar todos los usuarios'
+        menu_item 0 'Volver' blank
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
@@ -1157,14 +1263,14 @@ show_v2ray_users_menu() {
     while true; do
         show_header
         printf '%sAdministrar usuarios V2Ray/Xray%s\n\n' "$C_BOLD" "$C_RESET"
-        printf '  1) Crear usuario\n'
-        printf '  2) Renovar usuario\n'
-        printf '  3) Listar usuarios\n'
-        printf '  4) Eliminar usuario\n'
-        printf '  5) Usuarios en línea\n'
-        printf '  6) Auto kill (eliminar usuarios vencidos)\n'
-        printf '  7) Eliminar todos los usuarios\n'
-        printf '  0) Volver\n\n'
+        menu_item 1 'Crear usuario'
+        menu_item 2 'Renovar usuario'
+        menu_item 3 'Listar usuarios'
+        menu_item 4 'Eliminar usuario'
+        menu_item 5 'Usuarios en línea'
+        menu_item 6 'Auto kill (eliminar usuarios vencidos)'
+        menu_item 7 'Eliminar todos los usuarios'
+        menu_item 0 'Volver' blank
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
@@ -1179,9 +1285,9 @@ show_users_menu() {
     while true; do
         show_header
         printf '%sGestión de usuarios%s\n\n' "$C_BOLD" "$C_RESET"
-        printf '  1) Usuarios SSH\n'
-        printf '  2) Usuarios V2Ray/Xray\n'
-        printf '  0) Volver\n\n'
+        menu_item 1 'Usuarios SSH'
+        menu_item 2 'Usuarios V2Ray/Xray'
+        menu_item 0 'Volver' blank
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
@@ -1197,10 +1303,10 @@ show_services_menu() {
     while true; do
         show_header
         printf '%sServicios%s\n\n' "$C_BOLD" "$C_RESET"
-        printf '  1) Ver estado de servicios\n'
-        printf '  2) Reiniciar un servicio\n'
-        printf '  3) Ver registros\n'
-        printf '  0) Volver\n\n'
+        menu_item 1 'Ver estado de servicios'
+        menu_item 2 'Reiniciar un servicio'
+        menu_item 3 'Ver registros'
+        menu_item 0 'Volver' blank
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
@@ -1212,21 +1318,38 @@ show_services_menu() {
 }
 
 show_main_menu() {
+    local system_name ram_total ram_used cpu_cores
     while true; do
         show_header
-        printf '  1) Administrar usuarios\n'
-        printf '  2) Administrar servicios\n'
-        printf '  3) Información del servidor\n'
-        printf '  5) Copias de seguridad\n'
-        printf '  6) Actualizar el sistema\n'
-        printf '  7) Desinstalar este sistema\n'
-        printf '  8) Abrir menú de instalación\n'
-        if [[ -f "$AUTO_MENU_STATE" ]] && grep -Fxq 'enabled' "$AUTO_MENU_STATE"; then
-            printf '  9) Inicio automático al abrir terminal: ACTIVADO (desactivar)\n'
-        else
-            printf '  9) Inicio automático al abrir terminal: DESACTIVADO (activar)\n'
+        system_name="Linux"
+        if [[ -r /etc/os-release ]]; then
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            system_name="${PRETTY_NAME:-Linux}"
         fi
-        printf '  0) Salir\n\n'
+        ram_total="$(free -h 2>/dev/null | awk 'NR == 2 {print $2}')"
+        ram_used="$(free -h 2>/dev/null | awk 'NR == 2 {print $3}')"
+        cpu_cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '?')"
+        printf '%sSISTEMA%s  %s\n' "$C_GREEN$C_BOLD" "$C_RESET" "$system_name"
+        printf '%sMEMORIA RAM%s  Total: %s  En uso: %s     %sPROCESADOR%s  Núcleos: %s\n' \
+            "$C_GREEN$C_BOLD" "$C_RESET" "${ram_total:-N/D}" "${ram_used:-N/D}" \
+            "$C_GREEN$C_BOLD" "$C_RESET" "$cpu_cores"
+        printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n' "$C_BLUE" "$C_RESET"
+        printf '%sADMINISTRACIÓN%s\n\n' "$C_GREEN$C_BOLD" "$C_RESET"
+        printf '  %s[01]%s  %sAdministrar usuarios%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[02]%s  %sAdministrar servicios%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[03]%s  %sInformación del servidor%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[05]%s  %sCopias de seguridad%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[06]%s  %sActualizar menú de administración%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[07]%s  %sDesinstalar este sistema%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[08]%s  %sAbrir menú de instalación%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        if [[ -f "$AUTO_MENU_STATE" ]] && grep -Fxq 'enabled' "$AUTO_MENU_STATE"; then
+            printf '  %s[09]%s  %sInicio automático al abrir terminal: ACTIVADO (desactivar)%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        else
+            printf '  %s[09]%s  %sInicio automático al abrir terminal: DESACTIVADO (activar)%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        fi
+        printf '  %s[00]%s  %sSalir%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '\n%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n' "$C_BLUE" "$C_RESET"
 
         if (( EUID != 0 )); then
             printf '%sAviso: inicia el menú como root para habilitar tareas administrativas.%s\n\n' "$C_YELLOW" "$C_RESET"
@@ -1238,7 +1361,7 @@ show_main_menu() {
             1) show_users_menu ;;
             2) show_services_menu ;;
             3|5) not_ready ;;
-            6) update_system ;;
+            6) update_admin_menu ;;
             7) uninstall_system ;;
             8) open_installer_menu ;;
             9) toggle_auto_menu ;;
@@ -1247,11 +1370,14 @@ show_main_menu() {
         esac
     done
 }
-
 if [[ "${1:-}" == "--expire-ssh-users" ]]; then
     (( EUID == 0 )) || exit 1
     expire_ssh_users
     exit 0
+elif [[ "${1:-}" == "--update-system" ]]; then
+    (( EUID == 0 )) || exit 1
+    update_installed_system
+    exit $?
 fi
 
 show_main_menu

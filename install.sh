@@ -56,7 +56,14 @@ load_script_info() {
         exit 1
     fi
     [[ -n "$temp_info" ]] && rm -f -- "$temp_info"
-    if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+    if [[ -z "${APP_NAME:-}" || ! "${SCRIPT_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || -z "${OXGI_LOGO:-}" ||
+        -z "${OXGI_COLOR_RESET:-}" || -z "${OXGI_COLOR_BOLD:-}" || -z "${OXGI_COLOR_LINE:-}" ||
+        -z "${OXGI_COLOR_BRAND_BG:-}" || -z "${OXGI_COLOR_BRAND_FG:-}" || -z "${OXGI_COLOR_GREEN:-}" ||
+        -z "${OXGI_COLOR_RED:-}" || -z "${OXGI_COLOR_YELLOW:-}" || -z "${OXGI_COLOR_CYAN:-}" ||
+        -z "${OXGI_COLOR_BLUE:-}" || -z "${OXGI_COLOR_WHITE:-}" ||
+        -z "${OXGI_LOGO_LINE_1:-}" || -z "${OXGI_LOGO_LINE_2:-}" || -z "${OXGI_LOGO_LINE_3:-}" ||
+        -z "${OXGI_LOGO_LINE_4:-}" || -z "${OXGI_LOGO_LINE_5:-}" ]] ||
+        ! declare -F oxgi_print_logo >/dev/null; then
         printf 'Error: script-info.sh debe definir APP_NAME y una SCRIPT_VERSION válida.\n' >&2
         exit 1
     fi
@@ -66,14 +73,14 @@ load_script_info
 readonly APP_NAME SCRIPT_VERSION
 
 if [[ -t 1 ]]; then
-    readonly C_RESET=$'\033[0m'
-    readonly C_BOLD=$'\033[1m'
-    readonly C_CYAN=$'\033[36m'
-    readonly C_BLUE=$'\033[34m'
-    readonly C_GREEN=$'\033[32m'
-    readonly C_WHITE=$'\033[37m'
-    readonly C_YELLOW=$'\033[33m'
-    readonly C_RED=$'\033[31m'
+    readonly C_RESET="$OXGI_COLOR_RESET"
+    readonly C_BOLD="$OXGI_COLOR_BOLD"
+    readonly C_CYAN="$OXGI_COLOR_CYAN"
+    readonly C_BLUE="$OXGI_COLOR_BLUE"
+    readonly C_GREEN="$OXGI_COLOR_GREEN"
+    readonly C_WHITE="$OXGI_COLOR_WHITE"
+    readonly C_YELLOW="$OXGI_COLOR_YELLOW"
+    readonly C_RED="$OXGI_COLOR_RED"
 else
     readonly C_RESET=""
     readonly C_BOLD=""
@@ -118,29 +125,25 @@ check_system() {
 
 show_header() {
     clear 2>/dev/null || true
-
-    printf '%s%s%s\n' "$C_GREEN$C_BOLD" '   ___   __  __   ____   ___          __     __  ____    ____     ' "$C_RESET"
-    printf '%s%s%s\n' "$C_WHITE$C_BOLD" '  / _ \  \ \/ /  / ___| |_ _|         \ \   / / |  _ \  / ___| ' "$C_RESET"
-    printf '%s%s%s\n' "$C_WHITE$C_BOLD" ' | | | |  \  /  | |  _   | |   _____   \ \ / /  | |_) | \___ \ ' "$C_RESET"
-    printf '%s%s%s\n' "$C_RED$C_BOLD" ' | |_| |  /  \  | |_| |  | |  |_____|   \ V /   |  __/   ___) | ' "$C_RESET"
-    printf '%s%s%s\n' "$C_RED$C_BOLD" '  \___/  /_/\_\  \____| |___|            \_/    |_|     |____/ ' "$C_RESET"
-    printf '%s%s%s\n' "$C_YELLOW$C_BOLD" '                                          ' "$C_RESET"
+    oxgi_print_logo
+    printf '  %sVersión %s%s\n\n' "$C_CYAN$C_BOLD" "$SCRIPT_VERSION" "$C_RESET"
 }
-
 show_main_menu() {
     show_header
-    printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW" "$C_RESET"
+    printf '%sNota:%s al instalar, confirmas que aceptas las condiciones y políticas de uso del proyecto.\n' "$C_YELLOW$C_BOLD" "$C_RESET"
     printf 'Úsalo solo en una VPS que tengas autorización para administrar y cumple las reglas\n'
     printf 'de tu proveedor y la legislación aplicable.\n\n'
-    printf '1 - INSTALAR SCRIPT\n'
-    printf '2 - VERIFICAR VERSIÓN DEL SCRIPT\n'
-    printf '3 - ACTUALIZAR MENÚ DE INSTALACIÓN\n'
+    printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n' "$C_BLUE" "$C_RESET"
+    printf '  %s[01]%s  %sINSTALAR SCRIPT%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+    printf '  %s[02]%s  %sVERIFICAR VERSIÓN DEL SCRIPT%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+    printf '  %s[03]%s  %sACTUALIZAR MENÚ DE INSTALACIÓN%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
     if is_script_installed; then
-        printf '4 - CANCELAR Y VOLVER AL MENÚ DE ADMINISTRACIÓN\n'
+        printf '  %s[04]%s  %sACTUALIZAR SISTEMA COMPLETO%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+        printf '  %s[05]%s  %sCANCELAR Y VOLVER AL MENÚ DE ADMINISTRACIÓN%s\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
     fi
-    printf '0 - SALIR\n\n'
+    printf '  %s[00]%s  %sSALIR%s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$C_YELLOW$C_BOLD" "$C_RESET"
+    printf '%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n\n' "$C_BLUE" "$C_RESET"
 }
-
 is_valid_domain() {
     [[ "$1" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
 }
@@ -352,17 +355,13 @@ if [[ -x /opt/vpn-ssh-admin/menu.sh ]]; then
     exec bash /opt/vpn-ssh-admin/menu.sh "$@"
 fi
 
-installer_url="https://raw.githubusercontent.com/gitechcode-star/script-test/main/install.sh"
-installer_file="$(mktemp)" || exit 1
-if ! curl -fsSL "$installer_url" -o "$installer_file"; then
-    rm -f -- "$installer_file"
-    printf 'Error: no pude descargar el menú de instalación. Comprueba la conexión.\n' >&2
-    exit 1
-fi
-bash "$installer_file" "$@"
-status=$?
-rm -f -- "$installer_file"
-exit "$status"
+for installer_path in /usr/local/sbin/oxgi-vpn-installer /opt/vpn-ssh-admin/install.sh; do
+    if [[ -r "$installer_path" ]]; then
+        exec bash "$installer_path" "$@"
+    fi
+done
+printf 'Error: no se encontro el instalador en las rutas locales de OXGI.\n' >&2
+exit 1
 EOF
     then
         rm -f -- "$temp_file"
@@ -601,7 +600,10 @@ update_installer_menu() {
         ! grep -Fq 'script-info.sh' "$new_menu" ||
         ! bash -n -- "$new_info" ||
         ! grep -Eq '^APP_NAME=".+"$' "$new_info" ||
-        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$new_info"; then
+        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$new_info" ||
+        ! grep -Eq '^OXGI_LOGO=".+"$' "$new_info" ||
+        ! grep -Eq '^OXGI_LOGO_LINE_[1-5]=' "$new_info" ||
+        ! grep -Fq 'oxgi_print_logo() {' "$new_info"; then
         fail "Los archivos descargados no forman un paquete OXGI valido; no se modifico nada." || true
         rm -rf -- "$temp_dir"
         pause
@@ -730,14 +732,6 @@ main() {
         return 1
     fi
 
-    if ! ensure_menu_command force; then
-        printf '%sNo pude registrar el comando menu. Corrige el conflicto indicado y vuelve a ejecutar el instalador.%s\n' "$C_RED" "$C_RESET"
-        return 1
-    fi
-    if ! install_menu_function; then
-        printf '%sAdvertencia: el comando menu funcionará, pero no pude registrarlo en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
-    fi
-
     local choice
     while true; do
         show_main_menu
@@ -747,6 +741,14 @@ main() {
             2) show_version_menu ;;
             3) update_installer_menu ;;
             4)
+                if is_script_installed; then
+                    bash "$APP_ROOT/menu.sh" --update-system
+                else
+                    printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"
+                    pause
+                fi
+                ;;
+            5)
                 if is_script_installed; then
                     exec bash "$APP_ROOT/menu.sh"
                 fi
