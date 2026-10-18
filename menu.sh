@@ -12,6 +12,8 @@ readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly AUTO_MENU_STATE="/etc/vpn-ssh-admin/auto-menu"
 readonly ROOT_BASHRC="/root/.bashrc"
+readonly MENU_FUNCTION_BEGIN="# OXGI_MENU_FUNCTION_BEGIN"
+readonly MENU_FUNCTION_END="# OXGI_MENU_FUNCTION_END"
 readonly AUTO_MENU_BEGIN="# OXGI_AUTO_MENU_BEGIN"
 readonly AUTO_MENU_END="# OXGI_AUTO_MENU_END"
 readonly STATE_DIR="/var/lib/vpn-ssh-admin"
@@ -231,6 +233,9 @@ update_system() {
             return
         }
     fi
+    if ! install_menu_function; then
+        printf '%sEl menú se actualizó y el comando menu funciona, pero no pude registrar la función en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
+    fi
     rm -rf -- "$temp_dir" "$stage_dir"
     printf '%sSistema actualizado correctamente. Reiniciando el menú...%s\n' "$C_GREEN" "$C_RESET"
     exec bash "$APP_ROOT/menu.sh"
@@ -256,6 +261,58 @@ remove_auto_menu_hook() {
         $0 == end { skipping = 0; next }
         !skipping { print }
     ' "$ROOT_BASHRC" > "$temp_file"; then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
+}
+
+remove_menu_function() {
+    local temp_file begin_count end_count
+
+    [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] || return 0
+    begin_count="$(grep -Fxc -- "$MENU_FUNCTION_BEGIN" "$ROOT_BASHRC" || true)"
+    end_count="$(grep -Fxc -- "$MENU_FUNCTION_END" "$ROOT_BASHRC" || true)"
+    if [[ "$begin_count" == 0 && "$end_count" == 0 ]]; then
+        return 0
+    fi
+    if [[ "$begin_count" != 1 || "$end_count" != 1 ]]; then
+        printf '%sLos marcadores de la función menu en %s no están completos o están duplicados.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET" >&2
+        return 1
+    fi
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || return 1
+    if ! awk -v begin="$MENU_FUNCTION_BEGIN" -v end="$MENU_FUNCTION_END" '
+        $0 == begin { skipping = 1; next }
+        $0 == end { skipping = 0; next }
+        !skipping { print }
+    ' "$ROOT_BASHRC" > "$temp_file"; then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
+}
+
+install_menu_function() {
+    local temp_file
+
+    if [[ -L "$ROOT_BASHRC" || ( -e "$ROOT_BASHRC" && ! -f "$ROOT_BASHRC" ) ]]; then
+        printf '%sNo puedo instalar la función menu: %s no es un archivo normal.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET" >&2
+        return 1
+    fi
+    if [[ -f "$ROOT_BASHRC" ]] && { grep -Fq -- "$MENU_FUNCTION_BEGIN" "$ROOT_BASHRC" || grep -Fq -- "$MENU_FUNCTION_END" "$ROOT_BASHRC"; }; then
+        remove_menu_function || return 1
+    fi
+    [[ -f "$ROOT_BASHRC" ]] || install -o root -g root -m 0644 /dev/null "$ROOT_BASHRC"
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || return 1
+    if ! cat "$ROOT_BASHRC" > "$temp_file" || ! cat >> "$temp_file" <<'EOF'
+
+# OXGI_MENU_FUNCTION_BEGIN
+menu() {
+    /usr/local/bin/menu "$@"
+}
+# OXGI_MENU_FUNCTION_END
+EOF
+    then
         rm -f -- "$temp_file"
         return 1
     fi
@@ -303,6 +360,11 @@ toggle_auto_menu() {
             pause
             return
         }
+    fi
+    if ! install_menu_function; then
+        printf '%sLa función menu no quedó registrada en %s.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
+        pause
+        return
     fi
     if [[ -L "$ROOT_BASHRC" || ( -e "$ROOT_BASHRC" && ! -f "$ROOT_BASHRC" ) ]]; then
         printf '%sNo puedo modificar %s porque no es un archivo normal.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
@@ -385,6 +447,10 @@ uninstall_system() {
     if [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] && grep -Fq -- "$AUTO_MENU_BEGIN" "$ROOT_BASHRC"; then
         auto_menu_hook=1
     fi
+    local menu_function_installed=0
+    if [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] && grep -Fq -- "$MENU_FUNCTION_BEGIN" "$ROOT_BASHRC"; then
+        menu_function_installed=1
+    fi
 
     for path in "$APP_ROOT" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"; do
         if [[ -d "$path" && ! -L "$path" && -f "$path/$OWNERSHIP_MARKER" && ! -L "$path/$OWNERSHIP_MARKER" ]] &&
@@ -416,6 +482,9 @@ uninstall_system() {
     fi
     if (( auto_menu_hook )); then
         targets+=("Bloque de inicio automático en $ROOT_BASHRC")
+    fi
+    if (( menu_function_installed )); then
+        targets+=("Función menu en $ROOT_BASHRC")
     fi
 
     if (( ${#targets[@]} == 0 )); then
@@ -457,6 +526,11 @@ uninstall_system() {
         pause
         return
     fi
+    if ! remove_menu_function; then
+        printf '%sNo continué para conservar los archivos del menú; no pude quitar la función de inicio.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
 
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" ]] && grep -Fxq '# Managed by VPN-SSH-Admin' "$SERVICE_UNIT" && command -v systemctl >/dev/null 2>&1; then
         systemctl disable --now vpn-ssh-admin.service >/dev/null 2>&1 || true
@@ -474,6 +548,7 @@ uninstall_system() {
             "$MENU_COMMAND") rm -f -- "$path" ;;
             "$INSTALLER_LAUNCHER") rm -f -- "$path" ;;
             "Bloque de inicio automático en $ROOT_BASHRC") ;;
+            "Función menu en $ROOT_BASHRC") ;;
             /etc/letsencrypt/live/*|/etc/letsencrypt/archive/*) rm -rf -- "$path" ;;
             /etc/letsencrypt/renewal/*.conf|/usr/local/bin/certbot) rm -f -- "$path" ;;
             "$SERVICE_UNIT") rm -f -- "$path" ;;

@@ -5,6 +5,9 @@ set -Eeuo pipefail
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly MENU_COMMAND="/usr/local/bin/menu"
+readonly ROOT_BASHRC="/root/.bashrc"
+readonly MENU_FUNCTION_BEGIN="# OXGI_MENU_FUNCTION_BEGIN"
+readonly MENU_FUNCTION_END="# OXGI_MENU_FUNCTION_END"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/gitechcode-star/script-test/main"
@@ -258,6 +261,58 @@ is_script_installed() {
     [[ -f "$APP_ROOT/menu.sh" && -f "$APP_ROOT/install.sh" && -f "$APP_ROOT/script-info.sh" ]]
 }
 
+remove_menu_function() {
+    local temp_file begin_count end_count
+
+    [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] || return 0
+    begin_count="$(grep -Fxc -- "$MENU_FUNCTION_BEGIN" "$ROOT_BASHRC" || true)"
+    end_count="$(grep -Fxc -- "$MENU_FUNCTION_END" "$ROOT_BASHRC" || true)"
+    if [[ "$begin_count" == 0 && "$end_count" == 0 ]]; then
+        return 0
+    fi
+    [[ "$begin_count" == 1 && "$end_count" == 1 ]] || return 1
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || return 1
+    if ! awk -v begin="$MENU_FUNCTION_BEGIN" -v end="$MENU_FUNCTION_END" '
+        $0 == begin { skipping = 1; next }
+        $0 == end { skipping = 0; next }
+        !skipping { print }
+    ' "$ROOT_BASHRC" > "$temp_file"; then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
+}
+
+install_menu_function() {
+    local temp_file
+
+    if [[ -L "$ROOT_BASHRC" || ( -e "$ROOT_BASHRC" && ! -f "$ROOT_BASHRC" ) ]]; then
+        fail "$ROOT_BASHRC no es un archivo normal; no pude registrar la función menu." || true
+        return 1
+    fi
+    if [[ -f "$ROOT_BASHRC" ]] && { grep -Fq -- "$MENU_FUNCTION_BEGIN" "$ROOT_BASHRC" || grep -Fq -- "$MENU_FUNCTION_END" "$ROOT_BASHRC"; }; then
+        if ! remove_menu_function; then
+            fail "los marcadores de la función menu en $ROOT_BASHRC están incompletos o duplicados." || true
+            return 1
+        fi
+    fi
+    [[ -f "$ROOT_BASHRC" ]] || install -o root -g root -m 0644 /dev/null "$ROOT_BASHRC"
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || return 1
+    if ! cat "$ROOT_BASHRC" > "$temp_file" || ! cat >> "$temp_file" <<'EOF'
+
+# OXGI_MENU_FUNCTION_BEGIN
+menu() {
+    /usr/local/bin/menu "$@"
+}
+# OXGI_MENU_FUNCTION_END
+EOF
+    then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
+}
+
 install_current_version() {
     local domain source_menu source_installer source_info source_dir temp_source_dir menu_temp installer_temp info_temp domain_temp confirmation package_version
     temp_source_dir=""
@@ -396,6 +451,9 @@ install_current_version() {
     fi
     if [[ ! -L "$INSTALLER_LAUNCHER" ]]; then
         ln -s "$APP_ROOT/install.sh" "$INSTALLER_LAUNCHER"
+    fi
+    if ! install_menu_function; then
+        printf '%sAdvertencia: el acceso %s funciona, pero no pude registrar la función en %s.%s\n' "$C_YELLOW" "$MENU_COMMAND" "$ROOT_BASHRC" "$C_RESET"
     fi
     [[ -n "$temp_source_dir" ]] && rm -rf -- "$temp_source_dir"
 
@@ -573,6 +631,9 @@ update_installer_menu() {
             pause
             return
         }
+    fi
+    if [[ "$menu_target" == "$APP_ROOT/menu.sh" ]] && ! install_menu_function; then
+        printf '%sAdvertencia: el menú fue actualizado, pero no pude registrar la función menu en %s.%s\n' "$C_YELLOW" "$ROOT_BASHRC" "$C_RESET"
     fi
     rm -rf -- "$temp_dir"
 
