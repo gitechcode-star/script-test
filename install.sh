@@ -111,21 +111,15 @@ check_system() {
     fi
 }
 
-print_banner_line() {
-    local color="$1" text="$2" columns width padding
-    columns="$(tput cols 2>/dev/null || true)"
-    [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
-    width="${#text}"
-    (( columns > width )) || columns="$width"
-    padding=$(((columns - width) / 2))
-    printf '%*s%s%s%s\n' "$padding" '' "$color" "$text" "$C_RESET"
-}
-
 show_header() {
     clear 2>/dev/null || true
-    print_banner_line "$C_CYAN$C_BOLD" "$APP_NAME"
-    print_banner_line "$C_WHITE" "DESARROLLADO POR OXG  |  Version $SCRIPT_VERSION"
-    printf '\n'
+
+    printf '%s  ____   __  __   _____   _____       %s-----  %s   __      __   ______   _   _%s\n' "$C_GREEN$C_BOLD" "$C_YELLOW" "$C_GREEN$C_BOLD" "$C_RESET"
+    printf '%s / __ \  \ \/ /  / ____| |_   _|      %s-----  %s   \ \    / /  |  ____| | \ | |%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
+    printf '%s| |  | |  \  /  | |  __    | |        %s-----  %s    \ \  / /   | |__    |  \| |%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
+    printf '%s| |__| |  /  \  | | |_ |   | |        %s-----  %s     \ \/ /    |  __|   | |\  |%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
+    printf '%s \____/  /_/\_\  |_____|   |_|        %s-----  %s      \__/     |_|      |_| \_|%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
+    printf '%s                                   V2%s\n\n' "$C_YELLOW$C_BOLD" "$C_RESET"
 }
 show_main_menu() {
     show_header
