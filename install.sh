@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly APP_NAME="OXGI - VPN SCRIPT"
-readonly SCRIPT_VERSION="0.2.6"
+readonly SCRIPT_VERSION="0.2.7"
 readonly APP_ROOT="/opt/vpn-ssh-admin"
 readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
@@ -299,8 +299,8 @@ update_installer_menu() {
     fi
     new_version="$(sed -n 's/^readonly SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_installer" | head -n 1)"
     menu_version="$(sed -n 's/^readonly VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$new_menu" | head -n 1)"
-    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || "$new_version" != "$menu_version" ]]; then
-        fail "las versiones de install.sh y menu.sh no coinciden o no son válidas; no se modificó nada." || true
+    if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ || ! "$menu_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+        fail "la versión de install.sh o menu.sh no es válida; no se modificó nada." || true
         rm -rf -- "$temp_dir"
         pause
         return
@@ -327,7 +327,8 @@ update_installer_menu() {
         return
     fi
     printf '\nVersión actual del instalador: %s\n' "$SCRIPT_VERSION"
-    printf 'Versión publicada del paquete: %s\n' "$new_version"
+    printf 'Versión publicada de install.sh: %s\n' "$new_version"
+    printf 'Versión publicada de menu.sh: %s\n' "$menu_version"
     printf 'Se actualizarán el menú completo y sus archivos en:\n  %s\n  %s\n' "$target" "$menu_target"
     if [[ -f "$target" && -f "$menu_target" ]] &&
         cmp -s -- "$new_installer" "$target" && cmp -s -- "$new_menu" "$menu_target"; then
@@ -379,7 +380,7 @@ update_installer_menu() {
     fi
     rm -rf -- "$temp_dir"
 
-    printf '\n%sMenú completo y archivos del paquete actualizados a %s.%s\n' "$C_GREEN" "$new_version" "$C_RESET"
+    printf '\n%sMenú completo actualizado (install.sh %s, menu.sh %s).%s\n' "$C_GREEN" "$new_version" "$menu_version" "$C_RESET"
     printf 'Respaldos: %s.bak y %s.bak\n' "$target" "$menu_target"
     printf 'Reiniciando el instalador con el menú actualizado...\n'
     exec bash "$target"
