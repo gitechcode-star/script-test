@@ -123,14 +123,8 @@ print_banner_line() {
 
 show_header() {
     clear 2>/dev/null || true
-    print_banner_line "$C_GREEN$C_BOLD" ' _____  \     /   ____   _____                          \     /  _____  |\    |          _____   _____   _____   _____   _____  _______'
-    print_banner_line "$C_WHITE$C_BOLD" '/     \  \   /   / ___|    |                             \   /  |  _  \ | \   |         / ____| / ____| |  __ \    |    |  _  \    |   '
-    print_banner_line "$C_WHITE$C_BOLD" '|     |   \ /   | |  _     |            -------           \ /   | |_| | |  \  |         \___ \  | |     | |__) |    |    | |_| |    |   '
-    print_banner_line "$C_WHITE$C_BOLD" '|     |   / \   | |_| |    |                               V    |  __/  |   \ |          ___) | | |___  |  _  /    |    |  __/     |   '
-    print_banner_line "$C_RED$C_BOLD" ' \_____/  /   \   \____|  _____                             |    |_|     |    \|         |____/   \____| |_| \_\  _____  |_|        |   '
-    print_banner_line "$C_YELLOW$C_BOLD" 'V2'
-    printf '\n'
-    print_banner_line "$C_RED$C_BOLD" "DESARROLLADO POR OXG    Versión $SCRIPT_VERSION"
+    print_banner_line "$C_CYAN$C_BOLD" "$APP_NAME"
+    print_banner_line "$C_WHITE" "DESARROLLADO POR OXG  |  Version $SCRIPT_VERSION"
     printf '\n'
 }
 show_main_menu() {
