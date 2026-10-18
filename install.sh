@@ -295,6 +295,7 @@ update_installer_menu() {
     local temp_dir new_installer new_menu new_info target menu_target info_target
     local new_version new_name confirmation target_dir menu_target_dir info_target_dir
     local installer_temp menu_temp info_temp backup_temp menu_backup_temp info_backup_temp
+    local package_file normalized_file
     temp_dir="$(mktemp -d)"
     new_installer="$temp_dir/install.sh"
     new_menu="$temp_dir/menu.sh"
@@ -319,6 +320,18 @@ update_installer_menu() {
         pause
         return
     fi
+
+    # Strip Windows carriage returns before Bash validates the downloaded files.
+    for package_file in "$new_installer" "$new_menu" "$new_info"; do
+        normalized_file="${package_file}.lf"
+        if ! tr -d '\r' < "$package_file" > "$normalized_file"; then
+            fail "No pude normalizar los finales de línea del paquete; no se modificó nada." || true
+            rm -rf -- "$temp_dir"
+            pause
+            return
+        fi
+        mv -f -- "$normalized_file" "$package_file"
+    done
 
     if ! bash -n -- "$new_installer" ||
         ! grep -Fq 'main "$@"' "$new_installer" ||
