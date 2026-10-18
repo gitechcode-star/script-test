@@ -114,12 +114,12 @@ check_system() {
 show_header() {
     clear 2>/dev/null || true
 
-    printf '%s  ____   __  __   _____   _____       %s-----  %s   __      __   ______   _   _%s\n' "$C_GREEN$C_BOLD" "$C_YELLOW" "$C_GREEN$C_BOLD" "$C_RESET"
-    printf '%s / __ \  \ \/ /  / ____| |_   _|      %s-----  %s   \ \    / /  |  ____| | \ | |%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
-    printf '%s| |  | |  \  /  | |  __    | |        %s-----  %s    \ \  / /   | |__    |  \| |%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
-    printf '%s| |__| |  /  \  | | |_ |   | |        %s-----  %s     \ \/ /    |  __|   | |\  |%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
-    printf '%s \____/  /_/\_\  |_____|   |_|        %s-----  %s      \__/     |_|      |_| \_|%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
-    printf '%s                                   V2%s\n\n' "$C_YELLOW$C_BOLD" "$C_RESET"
+    printf '%s  ____   __  __   _____    _       %s-----  %s ____     ____   ____     _    ____   _____%s\n' "$C_GREEN$C_BOLD" "$C_YELLOW" "$C_GREEN$C_BOLD" "$C_RESET"
+    printf '%s / __ \  \ \/ /  / ____|  | |      %s-----  %s/ ___ |  /  __| |  _ \   | |  |  __ \ |_   _|%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
+    printf '%s| |  | |  \  /  | |  __   | |      %s-----  %s\___  |  | |    | |_) |  | |  | |__) |  | |%s\n' "$C_WHITE$C_BOLD" "$C_YELLOW" "$C_WHITE$C_BOLD" "$C_RESET"
+    printf '%s| |__| |  /  \  | | |_ |  | |      %s-----   %s___) |  | |__  |  _  |  | |  |  ___/   | |%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
+    printf '%s \____/  /_/\_\  |_____|  |_|      %s-----  %s|____/   \____| |_| \_|  |_|  |_|       |_|%s\n' "$C_RED$C_BOLD" "$C_YELLOW" "$C_RED$C_BOLD" "$C_RESET"
+    printf '%s                                           V2%s\n\n' "$C_YELLOW$C_BOLD" "$C_RESET"
 }
 show_main_menu() {
     show_header
