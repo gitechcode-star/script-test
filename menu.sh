@@ -130,18 +130,6 @@ update_system() {
         pause
         return
     fi
-    if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
-        if [[ -L "$MENU_COMMAND" ]] && [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]]; then
-            :
-        elif [[ -f "$MENU_COMMAND" && ! -L "$MENU_COMMAND" ]] && grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; then
-            :
-        else
-            printf '%s%s ya existe y no pertenece a este script; no se modificó.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
-            pause
-            return
-        fi
-    fi
-
     if ! temp_dir="$(mktemp -d)" || ! stage_dir="$(mktemp -d "$APP_ROOT/.system-update.XXXXXX")"; then
         printf '%sNo pude preparar el espacio temporal para la actualización.%s\n' "$C_RED" "$C_RESET"
         [[ -n "${temp_dir:-}" ]] && rm -rf -- "$temp_dir"
@@ -234,7 +222,7 @@ update_system() {
             return
         fi
     done
-    if ! ensure_menu_command; then
+    if ! ensure_menu_command force; then
         printf '%sNo pude configurar el comando %s, aunque el menú se actualizó.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
         rm -rf -- "$temp_dir" "$stage_dir"
         pause
@@ -327,18 +315,38 @@ EOF
 }
 
 ensure_menu_command() {
-    local temp_file
+    local force="${1:-no}" temp_file backup_path="" backup_index=0
 
     if [[ -L "$MENU_COMMAND" ]]; then
         [[ "$(readlink -- "$MENU_COMMAND")" == "$APP_ROOT/menu.sh" ]] && return 0
-        printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
-        return 1
+        if [[ "$force" != force ]]; then
+            printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
+            return 1
+        fi
+    elif [[ -e "$MENU_COMMAND" ]] && { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
+        if [[ "$force" != force ]]; then
+            printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
+            return 1
+        fi
     fi
-    if [[ -e "$MENU_COMMAND" ]] && { [[ ! -f "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
-        printf '%s%s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET" >&2
-        return 1
+
+    if [[ ( -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ) && "$force" == force ]] &&
+        { [[ -L "$MENU_COMMAND" ]] || ! grep -Fxq "$MENU_COMMAND_MARKER" "$MENU_COMMAND"; }; then
+        backup_path="$MENU_COMMAND.oxgi-backup.$(date +%Y%m%d%H%M%S)"
+        while [[ -e "$backup_path" || -L "$backup_path" ]]; do
+            ((backup_index += 1))
+            backup_path="$MENU_COMMAND.oxgi-backup.$(date +%Y%m%d%H%M%S).$backup_index"
+        done
+        if ! mv -- "$MENU_COMMAND" "$backup_path"; then
+            return 1
+        fi
+        printf 'Se guardó el lanzador anterior en %s\n' "$backup_path"
     fi
-    temp_file="$(mktemp /usr/local/bin/.menu.XXXXXX)" || return 1
+
+    temp_file="$(mktemp /usr/local/bin/.menu.XXXXXX)" || {
+        [[ -n "$backup_path" ]] && mv -- "$backup_path" "$MENU_COMMAND"
+        return 1
+    }
     if ! cat > "$temp_file" <<'EOF'
 #!/usr/bin/env bash
 # OXGI_MENU_COMMAND_LAUNCHER
@@ -358,11 +366,15 @@ exit "$status"
 EOF
     then
         rm -f -- "$temp_file"
+        [[ -n "$backup_path" ]] && mv -- "$backup_path" "$MENU_COMMAND"
         return 1
     fi
-    chmod 0755 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$MENU_COMMAND"
+    chmod 0755 "$temp_file" && chown root:root "$temp_file" && mv -f -- "$temp_file" "$MENU_COMMAND" || {
+        rm -f -- "$temp_file"
+        [[ -n "$backup_path" ]] && mv -- "$backup_path" "$MENU_COMMAND"
+        return 1
+    }
 }
-
 toggle_auto_menu() {
     local temp_file
 
