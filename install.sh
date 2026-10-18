@@ -82,21 +82,13 @@ check_system() {
 
 show_header() {
     clear 2>/dev/null || true
-    printf '%s%s\n' "$C_GREEN$C_BOLD" ' █████╗ ██╗  ██╗  ██████╗ ██╗  ██╗   ██╗ ██████╗ ██╗   ██╗'
-    printf '%s%s\n' "$C_WHITE" '██╔══██╗╚██╗██╔╝ ██╔════╝ ██║  ██║   ██║██╔══██╗██║  ██║'
-    printf '%s%s\n' "$C_WHITE" '██║  ██║ ╚███╔╝  ██║  ███╗██║  ██║   ██║██████╔╝██║  ██║'
-    printf '%s%s\n' "$C_WHITE" '██║  ██║ ██╔██╗  ██║   ██║██║  ╚██╗ ██╔╝██╔═══╝ ██║  ██║'
-    printf '%s%s\n' "$C_RED"   '╚█████╔╝██╔╝ ██╗ ╚██████╔╝╚██████╔╝ ╚████╔╝ ██║    ╚█████╔╝'
-    printf '%s%s\n' "$C_RED"   ' ╚════╝ ╚═╝  ╚═╝  ╚═════╝  ╚═╝  ╚═╝  ╚═══╝  ╚═╝     ╚════╝'
-    printf '%s   V2 - VPN%s\n' "$C_YELLOW$C_BOLD" "$C_RESET"
-    printf '%s     ✣%s\n' "$C_WHITE" "$C_RESET"
-    printf '%s%s\n' "$C_BLUE$C_BOLD" '██╗   ██╗ ██████╗ ███╗   ██╗   ███████╗ ██████╗ ██████╗ ██╗ ██████╗ ████████╗'
-    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██╔═══██╗████╗  ██║   ██╔════╝██╔════╝██╔══██╗██║██╔═══██╗╚══██╔══╝'
-    printf '%s%s\n' "$C_BLUE$C_BOLD" '██║   ██║██║   ██║██╔██╗ ██║   ███████╗██║     ██████╔╝██║██║   ██║   ██║'
-    printf '%s%s\n' "$C_BLUE$C_BOLD" '╚██╗ ██╔╝██║   ██║██║╚██╗██║   ╚════██║██║     ██╔══██╗██║██║   ██║   ██║'
-    printf '%s%s\n' "$C_BLUE$C_BOLD" ' ╚████╔╝ ╚██████╔╝██║ ╚████║   ███████║╚██████╗██║  ██║██║╚██████╔╝   ██║'
-    printf '%s%s\n' "$C_BLUE$C_BOLD" '  ╚═══╝   ╚═════╝ ╚═╝  ╚═══╝   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝ ╚═════╝    ╚═╝'
-    printf '%s\n' "$C_RESET"
+    printf '%s%s\n' "$C_GREEN$C_BOLD" '  ___   __  __    ____    ___       __   __   ____    _   _'
+    printf '%s%s\n' "$C_WHITE" ' / _ \  \ \/ /   / ___|  |_ _|     \ \ / /  |  _ \  | \ | |'
+    printf '%s%s%s%s%s%s%s\n' "$C_WHITE" '| | | |  \  /   | |  _    ' "$C_YELLOW$C_BOLD" '---' "$C_WHITE$C_BOLD" '    \ V /   | |_) | |  \| |' "$C_RESET"
+    printf '%s%s\n' "$C_WHITE" '| |_| |  /  \   | |_| |            \   /    |  __/  | |\  |'
+    printf '%s%s\n' "$C_RED$C_BOLD" ' \___/  /_/\_\   \____|             \_/     |_|     |_| \_|'
+    printf '%s%35s%s\n' "$C_YELLOW$C_BOLD" 'V2' "$C_RESET"
+    printf '%s\n\n' "$C_RESET"
     printf '%sDESARROLLADO POR OXG%s    Versión %s\n\n' "$C_RED$C_BOLD" "$C_RESET" "$SCRIPT_VERSION"
 }
 show_main_menu() {
