@@ -14,6 +14,7 @@ readonly LOG_DIR="/var/log/vpn-ssh-admin"
 readonly SERVICE_UNIT="/etc/systemd/system/vpn-ssh-admin.service"
 readonly OWNERSHIP_MARKER=".managed-by-vpn-ssh-admin"
 readonly MARKER_VALUE="Managed by VPN-SSH-Admin"
+readonly REPO_RAW_URL="https://raw.githubusercontent.com/gitechcode-star/script-test/main"
 
 script_path="${BASH_SOURCE[0]:-}"
 if [[ -n "$script_path" ]]; then
@@ -102,6 +103,119 @@ open_installer_menu() {
     fi
 }
 
+update_system() {
+    local temp_dir stage_dir file version package
+    local -a packages=()
+    local -a files=(menu.sh install.sh script-info.sh dependencies.txt)
+
+    if (( EUID != 0 )); then
+        printf '%sEjecuta el menú como root para actualizar los archivos e instalar dependencias.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ ! -f "$APP_ROOT/$OWNERSHIP_MARKER" ]] || ! grep -Fxq "$MARKER_VALUE" "$APP_ROOT/$OWNERSHIP_MARKER"; then
+        printf '%sNo pude confirmar que %s pertenezca a esta instalación.%s\n' "$C_RED" "$APP_ROOT" "$C_RESET"
+        pause
+        return
+    fi
+
+    if ! temp_dir="$(mktemp -d)" || ! stage_dir="$(mktemp -d "$APP_ROOT/.system-update.XXXXXX")"; then
+        printf '%sNo pude preparar el espacio temporal para la actualización.%s\n' "$C_RED" "$C_RESET"
+        [[ -n "${temp_dir:-}" ]] && rm -rf -- "$temp_dir"
+        pause
+        return
+    fi
+    printf 'Descargando la actualización completa...\n'
+    for file in "${files[@]}"; do
+        if ! curl -fsSL "$REPO_RAW_URL/$file" -o "$temp_dir/$file" ||
+            ! tr -d '\r' < "$temp_dir/$file" > "$temp_dir/$file.lf"; then
+            printf '%sNo pude descargar o preparar %s; no se actualizó el menú.%s\n' "$C_RED" "$file" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+        mv -f -- "$temp_dir/$file.lf" "$temp_dir/$file"
+    done
+
+    if ! bash -n -- "$temp_dir/menu.sh" ||
+        ! grep -Fq 'show_main_menu()' "$temp_dir/menu.sh" ||
+        ! bash -n -- "$temp_dir/install.sh" ||
+        ! grep -Fq 'main "$@"' "$temp_dir/install.sh" ||
+        ! bash -n -- "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^APP_NAME=".+"$' "$temp_dir/script-info.sh" ||
+        ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?"$' "$temp_dir/script-info.sh"; then
+        printf '%sEl paquete descargado no es válido; no se modificaron los archivos.%s\n' "$C_RED" "$C_RESET"
+        rm -rf -- "$temp_dir" "$stage_dir"
+        pause
+        return
+    fi
+
+    while IFS= read -r package || [[ -n "$package" ]]; do
+        package="${package%%#*}"
+        package="${package//[[:space:]]/}"
+        [[ -z "$package" ]] && continue
+        if [[ ! "$package" =~ ^[a-z0-9][a-z0-9+.-]*$ ]]; then
+            printf '%sLa lista de dependencias contiene un nombre inválido: %s%s\n' "$C_RED" "$package" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+        packages+=("$package")
+    done < "$temp_dir/dependencies.txt"
+
+    version="$(sed -n 's/^SCRIPT_VERSION="\([0-9][0-9A-Za-z.+-]*\)"$/\1/p' "$temp_dir/script-info.sh" | head -n 1)"
+    printf 'Versión disponible: %s\n' "${version:-desconocida}"
+    printf 'Instalando o actualizando dependencias del paquete...\n'
+    if (( ${#packages[@]} > 0 )); then
+        if ! apt-get update || ! apt-get install -y -- "${packages[@]}"; then
+            printf '%sNo se pudieron instalar las dependencias; los archivos del menú no se actualizaron.%s\n' "$C_RED" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+    fi
+
+    for file in "${files[@]}"; do
+        if [[ -f "$APP_ROOT/$file" && ! -L "$APP_ROOT/$file" ]]; then
+            if ! cp -p -- "$APP_ROOT/$file" "$APP_ROOT/$file.bak"; then
+                printf '%sNo pude guardar la copia de seguridad de %s; cancelé la actualización.%s\n' "$C_RED" "$file" "$C_RESET"
+                rm -rf -- "$temp_dir" "$stage_dir"
+                pause
+                return
+            fi
+        fi
+        case "$file" in
+            menu.sh|install.sh)
+                if ! install -o root -g root -m 0750 "$temp_dir/$file" "$stage_dir/$file"; then
+                    printf '%sNo pude preparar %s; no se reemplazaron los archivos.%s\n' "$C_RED" "$file" "$C_RESET"
+                    rm -rf -- "$temp_dir" "$stage_dir"
+                    pause
+                    return
+                fi
+                ;;
+            *)
+                if ! install -o root -g root -m 0640 "$temp_dir/$file" "$stage_dir/$file"; then
+                    printf '%sNo pude preparar %s; no se reemplazaron los archivos.%s\n' "$C_RED" "$file" "$C_RESET"
+                    rm -rf -- "$temp_dir" "$stage_dir"
+                    pause
+                    return
+                fi
+                ;;
+        esac
+    done
+    for file in "${files[@]}"; do
+        if ! mv -f -- "$stage_dir/$file" "$APP_ROOT/$file"; then
+            printf '%sFalló el reemplazo de %s. Revisa las copias .bak en %s.%s\n' "$C_RED" "$file" "$APP_ROOT" "$C_RESET"
+            rm -rf -- "$temp_dir" "$stage_dir"
+            pause
+            return
+        fi
+    done
+    rm -rf -- "$temp_dir" "$stage_dir"
+    printf '%sSistema actualizado correctamente. Reiniciando el menú...%s\n' "$C_GREEN" "$C_RESET"
+    exec bash "$APP_ROOT/menu.sh"
+}
+
 uninstall_system() {
     show_header
     printf '%sDesinstalar este sistema%s\n\n' "$C_BOLD" "$C_RESET"
@@ -177,15 +291,14 @@ uninstall_system() {
 show_users_menu() {
     while true; do
         show_header
-        printf '%sGestión de cuentas%s\n\n' "$C_BOLD" "$C_RESET"
-        printf '  1) Crear cuenta\n'
-        printf '  2) Listar cuentas\n'
-        printf '  3) Eliminar cuenta\n'
+        printf '%sGestión de usuarios%s\n\n' "$C_BOLD" "$C_RESET"
+        printf '  1) Usuarios SSH\n'
+        printf '  2) Usuarios V2Ray/Xray\n'
         printf '  0) Volver\n\n'
         choice=""
         IFS= read -r -p 'Selecciona una opción: ' choice || return
         case "$choice" in
-            1|2|3) not_ready ;;
+            1|2) not_ready ;;
             0) return ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
@@ -213,10 +326,9 @@ show_services_menu() {
 show_main_menu() {
     while true; do
         show_header
-        printf '  1) Administrar cuentas\n'
+        printf '  1) Administrar usuarios\n'
         printf '  2) Administrar servicios\n'
         printf '  3) Información del servidor\n'
-        printf '  4) Red y puertos\n'
         printf '  5) Copias de seguridad\n'
         printf '  6) Actualizar el sistema\n'
         printf '  7) Desinstalar este sistema\n'
@@ -232,10 +344,11 @@ show_main_menu() {
         case "$choice" in
             1) show_users_menu ;;
             2) show_services_menu ;;
-            3|4|5|6) not_ready ;;
+            3|5) not_ready ;;
+            6) update_system ;;
             7) uninstall_system ;;
             8) open_installer_menu ;;
-            0) printf '%sHasta luego.%s\n' "$C_GREEN" "$C_RESET"; return ;;
+            0) printf '%sHasta luego.%s\n' "$C_GREEN" "$C_RESET"; exit 0 ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
     done

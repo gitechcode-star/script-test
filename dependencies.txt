@@ -1,0 +1,6 @@
+# Paquetes base del instalador y del menú en Ubuntu 22.04/24.04.
+ca-certificates
+curl
+iproute2
+python3
+snapd
