@@ -117,8 +117,8 @@ show_header() {
     printf '%s%s%s\n' "$C_GREEN$C_BOLD" '   ___   __  __   ____   ___          __     __  ____    ____     ' "$C_RESET"
     printf '%s%s%s\n' "$C_WHITE$C_BOLD" '  / _ \  \ \/ /  / ___| |_ _|         \ \   / / |  _ \  / ___| ' "$C_RESET"
     printf '%s%s%s\n' "$C_WHITE$C_BOLD" ' | | | |  \  /  | |  _   | |   _____   \ \ / /  | |_) | \___ \ ' "$C_RESET"
-    printf '%s%s%s\n' "$C_RED$C_BOLD" '   | |_| |  /  \  | |_| |  | |  |_____|   \ V /   |  __/   ___) | ' "$C_RESET"
-    printf '%s%s%s\n' "$C_RED$C_BOLD" '    \___/  /_/\_\  \____| |___|            \_/    |_|     |____/ ' "$C_RESET"
+    printf '%s%s%s\n' "$C_RED$C_BOLD" ' | |_| |  /  \  | |_| |  | |  |_____|   \ V /   |  __/   ___) | ' "$C_RESET"
+    printf '%s%s%s\n' "$C_RED$C_BOLD" '  \___/  /_/\_\  \____| |___|            \_/    |_|     |____/ ' "$C_RESET"
     printf '%s%s%s\n' "$C_YELLOW$C_BOLD" '                                          ' "$C_RESET"
 }
 
