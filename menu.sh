@@ -10,6 +10,10 @@ readonly LAUNCHER="/usr/local/sbin/vpn-ssh-admin"
 readonly MENU_COMMAND="/usr/local/bin/menu"
 readonly INSTALLER_LAUNCHER="/usr/local/sbin/oxgi-vpn-installer"
 readonly CONFIG_DIR="/etc/vpn-ssh-admin"
+readonly AUTO_MENU_STATE="/etc/vpn-ssh-admin/auto-menu"
+readonly ROOT_BASHRC="/root/.bashrc"
+readonly AUTO_MENU_BEGIN="# OXGI_AUTO_MENU_BEGIN"
+readonly AUTO_MENU_END="# OXGI_AUTO_MENU_END"
 readonly STATE_DIR="/var/lib/vpn-ssh-admin"
 readonly LOG_DIR="/var/log/vpn-ssh-admin"
 readonly SERVICE_UNIT="/etc/systemd/system/vpn-ssh-admin.service"
@@ -232,6 +236,127 @@ update_system() {
     exec bash "$APP_ROOT/menu.sh"
 }
 
+remove_auto_menu_hook() {
+    local temp_file begin_count end_count
+
+    [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] || return 0
+    begin_count="$(grep -Fxc -- "$AUTO_MENU_BEGIN" "$ROOT_BASHRC" || true)"
+    end_count="$(grep -Fxc -- "$AUTO_MENU_END" "$ROOT_BASHRC" || true)"
+    if [[ "$begin_count" == 0 && "$end_count" == 0 ]]; then
+        return 0
+    fi
+    if [[ "$begin_count" != 1 || "$end_count" != 1 ]]; then
+        printf '%sNo pude quitar el inicio automático: los marcadores de %s no están completos o están duplicados.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET" >&2
+        return 1
+    fi
+
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || return 1
+    if ! awk -v begin="$AUTO_MENU_BEGIN" -v end="$AUTO_MENU_END" '
+        $0 == begin { skipping = 1; next }
+        $0 == end { skipping = 0; next }
+        !skipping { print }
+    ' "$ROOT_BASHRC" > "$temp_file"; then
+        rm -f -- "$temp_file"
+        return 1
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC"
+}
+
+toggle_auto_menu() {
+    local temp_file
+
+    if (( EUID != 0 )); then
+        printf '%sEjecuta el menú como root para cambiar el inicio automático.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ -L "$CONFIG_DIR" || ! -f "$CONFIG_DIR/$OWNERSHIP_MARKER" ]] || ! grep -Fxq "$MARKER_VALUE" "$CONFIG_DIR/$OWNERSHIP_MARKER"; then
+        printf '%sNo pude validar la carpeta de configuración de esta instalación.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ ! -f "$APP_ROOT/menu.sh" || -L "$APP_ROOT/menu.sh" ]]; then
+        printf '%sNo encontré el menú instalado en %s.%s\n' "$C_RED" "$APP_ROOT" "$C_RESET"
+        pause
+        return
+    fi
+    if [[ -f "$AUTO_MENU_STATE" ]] && grep -Fxq 'enabled' "$AUTO_MENU_STATE"; then
+        if ! remove_auto_menu_hook; then
+            pause
+            return
+        fi
+        rm -f -- "$AUTO_MENU_STATE"
+        printf '%sInicio automático desactivado. Puedes abrir el menú escribiendo: menu%s\n' "$C_GREEN" "$C_RESET"
+        pause
+        return
+    fi
+
+    if [[ -e "$MENU_COMMAND" || -L "$MENU_COMMAND" ]]; then
+        if [[ ! -L "$MENU_COMMAND" || "$(readlink -- "$MENU_COMMAND")" != "$APP_ROOT/menu.sh" ]]; then
+            printf '%sNo puedo configurar el acceso: %s ya existe y no pertenece a este sistema.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
+            pause
+            return
+        fi
+    else
+        ln -s "$APP_ROOT/menu.sh" "$MENU_COMMAND" || {
+            printf '%sNo pude crear el comando %s.%s\n' "$C_RED" "$MENU_COMMAND" "$C_RESET"
+            pause
+            return
+        }
+    fi
+    if [[ -L "$ROOT_BASHRC" || ( -e "$ROOT_BASHRC" && ! -f "$ROOT_BASHRC" ) ]]; then
+        printf '%sNo puedo modificar %s porque no es un archivo normal.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
+        pause
+        return
+    fi
+
+    if [[ -f "$ROOT_BASHRC" ]] && { grep -Fq -- "$AUTO_MENU_BEGIN" "$ROOT_BASHRC" || grep -Fq -- "$AUTO_MENU_END" "$ROOT_BASHRC"; }; then
+        if ! remove_auto_menu_hook; then
+            pause
+            return
+        fi
+    fi
+    [[ -f "$ROOT_BASHRC" ]] || install -o root -g root -m 0644 /dev/null "$ROOT_BASHRC"
+    temp_file="$(mktemp /root/.bashrc.oxgi.XXXXXX)" || {
+        printf '%sNo pude preparar %s.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
+        pause
+        return
+    }
+    if ! cat "$ROOT_BASHRC" > "$temp_file" || ! cat >> "$temp_file" <<'EOF'
+
+# OXGI_AUTO_MENU_BEGIN
+if [[ $- == *i* && -t 0 && -t 1 && ${EUID:-$(id -u)} -eq 0 && -f /etc/vpn-ssh-admin/auto-menu ]] && grep -Fxq 'enabled' /etc/vpn-ssh-admin/auto-menu; then
+    exec /usr/local/bin/menu
+fi
+# OXGI_AUTO_MENU_END
+EOF
+    then
+        rm -f -- "$temp_file"
+        printf '%sNo pude guardar el inicio automático en %s.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
+        pause
+        return
+    fi
+    chmod --reference="$ROOT_BASHRC" "$temp_file" && chown --reference="$ROOT_BASHRC" "$temp_file" && mv -f -- "$temp_file" "$ROOT_BASHRC" || {
+        rm -f -- "$temp_file"
+        printf '%sNo pude instalar el bloque automático en %s.%s\n' "$C_RED" "$ROOT_BASHRC" "$C_RESET"
+        pause
+        return
+    }
+
+    temp_file="$(mktemp /etc/vpn-ssh-admin/.auto-menu.XXXXXX)" || {
+        remove_auto_menu_hook || true
+        printf '%sNo pude guardar la preferencia de inicio automático.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    }
+    printf 'enabled\n' > "$temp_file"
+    chmod 0644 "$temp_file"
+    mv -f -- "$temp_file" "$AUTO_MENU_STATE"
+    printf '%sInicio automático activado para las terminales interactivas de root.%s\n' "$C_GREEN" "$C_RESET"
+    printf 'En terminales nuevas se abrirá el menú; escribe menu para abrirlo manualmente cuando esté desactivado.\n'
+    pause
+}
+
 uninstall_system() {
     show_header
     printf '%sDesinstalar este sistema%s\n\n' "$C_BOLD" "$C_RESET"
@@ -243,7 +368,23 @@ uninstall_system() {
     fi
 
     local -a targets=()
-    local path
+    local path certificate_domain="" certbot_link_owned=0
+
+    if [[ -f "$CONFIG_DIR/domain" && ! -L "$CONFIG_DIR/domain" ]]; then
+        IFS= read -r certificate_domain < "$CONFIG_DIR/domain" || true
+        if [[ ! "$certificate_domain" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
+            printf '%sEl dominio guardado no es válido; no puedo retirar sus recursos SSL de forma segura.%s\n' "$C_RED" "$C_RESET"
+            pause
+            return
+        fi
+    fi
+    if [[ -L /usr/local/bin/certbot ]] && [[ "$(readlink -- /usr/local/bin/certbot)" == "/snap/bin/certbot" ]]; then
+        certbot_link_owned=1
+    fi
+    local auto_menu_hook=0
+    if [[ -f "$ROOT_BASHRC" && ! -L "$ROOT_BASHRC" ]] && grep -Fq -- "$AUTO_MENU_BEGIN" "$ROOT_BASHRC"; then
+        auto_menu_hook=1
+    fi
 
     for path in "$APP_ROOT" "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"; do
         if [[ -d "$path" && ! -L "$path" && -f "$path/$OWNERSHIP_MARKER" && ! -L "$path/$OWNERSHIP_MARKER" ]] &&
@@ -263,6 +404,19 @@ uninstall_system() {
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" ]] && grep -Fxq '# Managed by VPN-SSH-Admin' "$SERVICE_UNIT"; then
         targets+=("$SERVICE_UNIT")
     fi
+    if [[ -n "$certificate_domain" ]]; then
+        for path in "/etc/letsencrypt/live/$certificate_domain" "/etc/letsencrypt/archive/$certificate_domain" "/etc/letsencrypt/renewal/$certificate_domain.conf"; do
+            if [[ -e "$path" || -L "$path" ]]; then
+                targets+=("$path")
+            fi
+        done
+    fi
+    if (( certbot_link_owned )); then
+        targets+=("/usr/local/bin/certbot")
+    fi
+    if (( auto_menu_hook )); then
+        targets+=("Bloque de inicio automático en $ROOT_BASHRC")
+    fi
 
     if (( ${#targets[@]} == 0 )); then
         printf 'No encontré archivos instalados en las rutas administradas por este script.\n'
@@ -271,13 +425,15 @@ uninstall_system() {
         return
     fi
 
-    printf 'Se eliminarán únicamente estas rutas:\n'
+    printf 'Se eliminarán los archivos y recursos creados por la instalación:\n'
     for path in "${targets[@]}"; do
         printf '  - %s\n' "$path"
     done
-    printf '\nTambién se intentará detener y deshabilitar el servicio propio si existe.\n'
-    printf 'No se eliminarán paquetes del sistema ni configuraciones compartidas.\n\n'
-    printf '%sEsto puede borrar cuentas y datos guardados por el sistema VPN/SSH.%s\n' "$C_RED" "$C_RESET"
+    if (( certbot_link_owned )) && command -v snap >/dev/null 2>&1 && snap list certbot >/dev/null 2>&1; then
+        printf '  - Paquete Certbot de Snap (instalado por este instalador)\n'
+    fi
+    printf '\nTambién se detendrá y quitará el servicio propio si existe.\n'
+    printf '%sSe borrarán el dominio y los datos SSL asociados guardados por esta instalación.%s\n' "$C_RED" "$C_RESET"
     read -r -p 'Para confirmar, escribe ELIMINAR: ' confirmation || return
     if [[ "$confirmation" != "ELIMINAR" ]]; then
         printf 'Cancelado. No se modificó el servidor.\n'
@@ -285,8 +441,30 @@ uninstall_system() {
         return
     fi
 
+    if [[ -n "$certificate_domain" ]]; then
+        if command -v certbot >/dev/null 2>&1; then
+            if ! certbot delete --cert-name "$certificate_domain" --non-interactive; then
+                printf '%sCertbot no pudo retirar el certificado de %s; cancelo para no dejar una desinstalación a medias.%s\n' "$C_RED" "$certificate_domain" "$C_RESET"
+                pause
+                return
+            fi
+        fi
+        rm -rf -- "/etc/letsencrypt/live/$certificate_domain" "/etc/letsencrypt/archive/$certificate_domain"
+        rm -f -- "/etc/letsencrypt/renewal/$certificate_domain.conf"
+    fi
+    if ! remove_auto_menu_hook; then
+        printf '%sNo continué para no dejar una configuración automática rota.%s\n' "$C_RED" "$C_RESET"
+        pause
+        return
+    fi
+
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" ]] && grep -Fxq '# Managed by VPN-SSH-Admin' "$SERVICE_UNIT" && command -v systemctl >/dev/null 2>&1; then
         systemctl disable --now vpn-ssh-admin.service >/dev/null 2>&1 || true
+    fi
+    if (( certbot_link_owned )) && command -v snap >/dev/null 2>&1 && snap list certbot >/dev/null 2>&1; then
+        if ! snap remove certbot --purge; then
+            printf '%sNo pude retirar Certbot de Snap; el resto de la desinstalación continúa.%s\n' "$C_RED" "$C_RESET"
+        fi
     fi
 
     for path in "${targets[@]}"; do
@@ -295,6 +473,9 @@ uninstall_system() {
             "$LAUNCHER") rm -f -- "$path" ;;
             "$MENU_COMMAND") rm -f -- "$path" ;;
             "$INSTALLER_LAUNCHER") rm -f -- "$path" ;;
+            "Bloque de inicio automático en $ROOT_BASHRC") ;;
+            /etc/letsencrypt/live/*|/etc/letsencrypt/archive/*) rm -rf -- "$path" ;;
+            /etc/letsencrypt/renewal/*.conf|/usr/local/bin/certbot) rm -f -- "$path" ;;
             "$SERVICE_UNIT") rm -f -- "$path" ;;
         esac
     done
@@ -303,8 +484,7 @@ uninstall_system() {
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
 
-    printf '\n%sSe eliminaron los archivos propios registrados en las rutas anteriores.%s\n' "$C_GREEN" "$C_RESET"
-    printf 'Los paquetes compartidos y la configuración general del servidor permanecen intactos.\n'
+    printf '\n%sSe eliminaron los archivos del sistema y el certificado SSL asociado.%s\n' "$C_GREEN" "$C_RESET"
     pause
 }
 
@@ -353,6 +533,11 @@ show_main_menu() {
         printf '  6) Actualizar el sistema\n'
         printf '  7) Desinstalar este sistema\n'
         printf '  8) Abrir menú de instalación\n'
+        if [[ -f "$AUTO_MENU_STATE" ]] && grep -Fxq 'enabled' "$AUTO_MENU_STATE"; then
+            printf '  9) Inicio automático al abrir terminal: ACTIVADO (desactivar)\n'
+        else
+            printf '  9) Inicio automático al abrir terminal: DESACTIVADO (activar)\n'
+        fi
         printf '  0) Salir\n\n'
 
         if (( EUID != 0 )); then
@@ -368,6 +553,7 @@ show_main_menu() {
             6) update_system ;;
             7) uninstall_system ;;
             8) open_installer_menu ;;
+            9) toggle_auto_menu ;;
             0) printf '%sHasta luego.%s\n' "$C_GREEN" "$C_RESET"; exit 0 ;;
             *) printf '%sOpción inválida.%s\n' "$C_RED" "$C_RESET"; pause ;;
         esac
